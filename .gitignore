@@ -1,0 +1,13 @@
+.codegraph/
+.ai-bridge/
+.thinkforge*
+.libby-cli/
+acsm_downloads/
+adobe-registration.json
+__pycache__/
+*.py[cod]
+.pytest_cache/
+dist/
+TEMP-WHILE-INITIAL-DESIGN/
+Working Before UI Change.zip
+crash.log
