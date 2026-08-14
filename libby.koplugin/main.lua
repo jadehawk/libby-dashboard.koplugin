@@ -219,20 +219,31 @@ function Libby:downloadLoan(loan)
         return
     end
 
-    NetworkMgr:runWhenConnected(function()
+    local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
+    local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
+    if not (wifi_on and connected) then
+        UIManager:show(InfoMessage:new{ text = _("Wi-Fi is not available. Connect to Wi-Fi and try again.") })
+        return
+    end
+
+    Trapper:wrap(function()
+        Trapper:info(_("Fetching book from Libby…\n\nPlease stand by."), false, true)
         local acsm, err = self.controller:download_loan_acsm(loan)
         if not acsm then
+            Trapper:reset()
             UIManager:show(InfoMessage:new{ text = _("Could not download ACSM:") .. "\n\n" .. tostring(err) })
             return
         end
         local destination = self.controller:book_destination(loan, "acsm")
         local parent = util.dirname(destination)
         if parent and parent ~= "" and not koUtil.makePath(parent) then
+            Trapper:reset()
             UIManager:show(InfoMessage:new{ text = _("Could not create destination folder:") .. "\n\n" .. tostring(parent) })
             return
         end
         local file, file_err = io.open(destination, "wb")
         if not file then
+            Trapper:reset()
             UIManager:show(InfoMessage:new{ text = _("Could not save ACSM:") .. "\n\n" .. tostring(file_err) })
             return
         end
@@ -243,6 +254,7 @@ function Libby:downloadLoan(loan)
             Trapper:info(_("Preparing Adobe authorization..."), false, true)
             local registered, register_err = self.controller:ensure_adobe_registration()
             if not registered then
+                Trapper:reset()
                 UIManager:show(InfoMessage:new{
                     text = _("ACSM downloaded successfully:") .. "\n\n" .. destination
                         .. "\n\n" .. _("Could not prepare Adobe authorization:") .. "\n" .. tostring(register_err),
@@ -251,16 +263,19 @@ function Libby:downloadLoan(loan)
             end
         end
 
+        Trapper:info(_("Downloading and preparing book…"), false, true)
         local extension = loan.adobe_format:find("pdf", 1, true) and "pdf" or "epub"
         local output = self.controller:book_destination(loan, extension)
         local fulfilled, fulfill_err = self.controller:fulfill_acsm(destination, output)
         if not fulfilled then
+            Trapper:reset()
             UIManager:show(InfoMessage:new{ text = _("ACSM saved, but Adobe fulfillment failed:") .. "\n\n" .. tostring(fulfill_err) })
             return
         end
         os.remove(destination)
         local downloaded_path = fulfilled.outputPath or output
         self.controller:track_downloaded_loan(loan, downloaded_path)
+        Trapper:clear()
         UIManager:show(InfoMessage:new{ text = _("Book downloaded successfully:") .. "\n\n" .. tostring(downloaded_path) })
     end)
 end
@@ -581,6 +596,9 @@ function Libby:refreshBrowserSnapshot(browser)
     local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
     local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
     if not (wifi_on and connected) then
+        UIManager:show(InfoMessage:new{
+            text = _("Wi-Fi is not available. Connect to Wi-Fi and try again."),
+        })
         return false
     end
 
@@ -636,6 +654,11 @@ function Libby:showBrowser()
         _manager = self,
         download_callback = function(loan)
             self:downloadLoan(loan)
+        end,
+        network_available_callback = function()
+            local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
+            local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
+            return wifi_on and connected
         end,
         cover_path_callback = function(loan)
             return self:coverCachePath(loan)

@@ -12,6 +12,7 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local IconWidget = require("ui/widget/iconwidget")
 local ImageWidget = require("ui/widget/imagewidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
+local LeftContainer = require("ui/widget/container/leftcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local RenderImage = require("ui/renderimage")
 local Size = require("ui/size")
@@ -50,6 +51,35 @@ local function tappableFrame(text, width, height, selected, callback, font_size)
         color = Blitbuffer.COLOR_BLACK,
         background = bg,
         radius = 0,
+        CenterContainer:new{ dimen = Geom:new{ w = width, h = height }, label },
+    }
+    local item = InputContainer:new{ dimen = Geom:new{ w = width, h = height }, frame }
+    item.ges_events = { TapSelect = { GestureRange:new{ ges = "tap", range = item.dimen } } }
+    item.onTapSelect = function()
+        if callback then callback() end
+        return true
+    end
+    return item
+end
+
+local function actionButton(text, width, height, available, callback)
+    local bg = available and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_LIGHT_GRAY
+    local fg = available and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_DARK_GRAY
+    local label = TextWidget:new{
+        text = text,
+        face = Font:getFace("cfont", 15),
+        bold = true,
+        fgcolor = fg,
+        max_width = math.max(1, width - 2 * Screen:scaleBySize(10)),
+    }
+    local frame = FrameContainer:new{
+        width = width,
+        height = height,
+        margin = 0,
+        padding = 0,
+        bordersize = 0,
+        background = bg,
+        radius = Size.radius.button,
         CenterContainer:new{ dimen = Geom:new{ w = width, h = height }, label },
     }
     local item = InputContainer:new{ dimen = Geom:new{ w = width, h = height }, frame }
@@ -346,56 +376,70 @@ function LibbyCatalog:heroWidget(width, height)
     local cover_w = math.floor(cover_h * 0.66)
     local path = self.cover_path_callback and self.cover_path_callback(loan) or nil
     local text_w = math.max(1, width - cover_w - 4 * pad)
-    local info = VerticalGroup:new{ align = "left" }
-    table.insert(info, TextBoxWidget:new{
+    local info_top = VerticalGroup:new{ align = "left" }
+    table.insert(info_top, TextBoxWidget:new{
         text = safeText(loan.title or _("Untitled"), 120), width = text_w,
         bold = true, face = Font:getFace("cfont", 22), height_overflow_show_ellipsis = true,
     })
-    if loan.author then
-        table.insert(info, TextBoxWidget:new{
-            text = safeText(loan.author, 80), width = text_w,
-            face = Font:getFace("cfont", 17), height_overflow_show_ellipsis = true,
+
+    local metadata_face = Font:getFace("smallinfofont", 14)
+    local metadata_rows = {
+        _("Author: ") .. safeText(loan.author or _("N/A"), 80),
+        _("Series: ") .. safeText(loan.series or _("N/A"), 80),
+        _("Series Index: ") .. safeText(loan.series_index ~= nil and tostring(loan.series_index) or _("N/A"), 40),
+        _("Format: ") .. mediaLabel(loan),
+        _("Library: ") .. safeText(loan.library or _("N/A"), 100),
+        _("Expires On: ") .. (loan.days_remaining ~= nil and (tostring(loan.days_remaining) .. _(" days left")) or _("N/A")),
+    }
+    for _, row in ipairs(metadata_rows) do
+        table.insert(info_top, TextBoxWidget:new{
+            text = row,
+            width = text_w,
+            face = metadata_face,
+            height_overflow_show_ellipsis = true,
         })
     end
-    if loan.series then
-        local series = tostring(loan.series)
-        if loan.series_index ~= nil then series = series .. " #" .. tostring(loan.series_index) end
-        table.insert(info, TextBoxWidget:new{
-            text = safeText(series, 80), width = text_w,
-            face = Font:getFace("smallinfofont", 14), height_overflow_show_ellipsis = true,
-        })
-    end
-    local meta = {}
-    if loan.library then table.insert(meta, loan.library) end
-    table.insert(meta, mediaLabel(loan))
-    if loan.days_remaining ~= nil then table.insert(meta, tostring(loan.days_remaining) .. _(" days left")) end
-    table.insert(info, TextBoxWidget:new{
-        text = safeText(table.concat(meta, " · "), 120), width = text_w,
-        face = Font:getFace("smallinfofont", 14), height_overflow_show_ellipsis = true,
-    })
 
     local action_text
-    local enabled = loan.adobe_format ~= nil
+    local downloadable = loan.adobe_format ~= nil
+    local network_ok = self.network_available_callback == nil or self.network_available_callback()
     if loan.media_type == "audiobook" then
         action_text = _("Audiobook — not supported")
-        enabled = false
+        downloadable = false
     elseif loan.media_type == "magazine" then
         action_text = _("Magazine — not supported")
-        enabled = false
+        downloadable = false
     elseif not loan.adobe_format then
         action_text = _("No supported EPUB/PDF format")
-        enabled = false
+        downloadable = false
     else
         action_text = _("Download")
     end
-    table.insert(info, VerticalSpan:new{ width = Size.span.vertical_default })
-    table.insert(info, Button:new{
-        text = action_text,
-        enabled = enabled,
-        callback = function()
-            if enabled and self.download_callback then self.download_callback(loan) end
-        end,
-    })
+
+    local action_h = Screen:scaleBySize(34)
+    local action_w = math.min(text_w, Screen:scaleBySize(118))
+    local action
+    if downloadable then
+        action = actionButton(action_text, action_w, action_h, network_ok, function()
+            if self.download_callback then self.download_callback(loan) end
+        end)
+    else
+        action = Button:new{
+            text = action_text,
+            enabled = false,
+            text_font_size = 14,
+            max_width = text_w,
+            height = action_h,
+        }
+    end
+    local info = OverlapGroup:new{
+        dimen = Geom:new{ w = text_w, h = cover_h },
+        info_top,
+        BottomContainer:new{
+            dimen = Geom:new{ w = text_w, h = cover_h },
+            LeftContainer:new{ dimen = Geom:new{ w = text_w, h = action_h }, action },
+        },
+    }
 
     return FrameContainer:new{
         width = width, height = height, margin = 0, padding = pad,
@@ -606,7 +650,15 @@ function LibbyCatalog:updateItems()
     }
     overlap[#overlap + 1] = BottomContainer:new{
         dimen = Geom:new{ w = self.width, h = self.height },
-        self:paginationWidget(self.width, footer_height),
+        FrameContainer:new{
+            width = self.width,
+            height = footer_height,
+            margin = 0,
+            padding = 0,
+            bordersize = 0,
+            background = Blitbuffer.COLOR_WHITE,
+            self:paginationWidget(self.width, footer_height),
+        },
     }
 
     if self[1] and self[1].free then self[1]:free() end
