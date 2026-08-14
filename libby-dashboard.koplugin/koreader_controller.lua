@@ -23,6 +23,7 @@ local DEFAULTS = {
     libby_snapshot = nil,
     libby_identity = nil,
     downloaded_loans = {},
+    cleanup_mode = "normal",
     adobe_registration = nil,
 }
 
@@ -53,7 +54,7 @@ function KOReaderController:load()
     end
 
     -- One-time migration from the old G_reader_settings entry into the
-    -- dedicated settings/libby.lua store. Keep G_reader_settings only for
+    -- dedicated settings/libby-dashboard.lua store. Keep G_reader_settings only for
     -- KOReader-owned globals such as home_dir.
     if loaded == nil and store ~= self.reader_settings then
         local legacy = self.reader_settings
@@ -236,7 +237,7 @@ function KOReaderController:reconcile_downloaded_loans(snapshot, remove_book)
     local records = self.settings.downloaded_loans
     if type(records) ~= "table" then
         self.settings.downloaded_loans = {}
-        return true, 0
+        return true, 0, 0
     end
     local active = {}
     for _, loan in ipairs(type(snapshot) == "table" and snapshot.loans or {}) do
@@ -244,21 +245,26 @@ function KOReaderController:reconcile_downloaded_loans(snapshot, remove_book)
     end
     local now = os.time()
     local removed = 0
+    local candidates = 0
+    local dry_run = self.settings.cleanup_mode == "dry_run"
     for key, record in pairs(records) do
         local expired = type(record.expires_at) == "number" and record.expires_at <= now
         if expired or not active[key] then
-            if type(remove_book) == "function" and type(record.path) == "string" then
-                remove_book(record.path)
+            candidates = candidates + 1
+            if not dry_run then
+                if type(remove_book) == "function" and type(record.path) == "string" then
+                    remove_book(record.path)
+                end
+                records[key] = nil
+                removed = removed + 1
             end
-            records[key] = nil
-            removed = removed + 1
         end
     end
     if removed > 0 then
         local saved, err = self:save()
         if not saved then return nil, err end
     end
-    return true, removed
+    return true, removed, candidates
 end
 
 function KOReaderController:refresh_libby_snapshot()
@@ -432,7 +438,7 @@ function KOReaderController:create_adobe_account_registration(username, password
 end
 
 function KOReaderController:ensure_adobe_registration()
-    if self:adobe_registered() then return AdobeProfile.summary(self.settings.adobe_registration), "libby" end
+    if self:adobe_registered() then return AdobeProfile.summary(self.settings.adobe_registration), "libby-dashboard" end
     local adopted = self:adopt_acsm_registration()
     if adopted then return adopted, "acsm" end
     local created, err = self:create_adobe_registration()

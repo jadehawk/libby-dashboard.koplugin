@@ -402,8 +402,12 @@ function LibbyCatalog:heroWidget(width, height)
 
     local action_text
     local downloadable = loan.adobe_format ~= nil
+    local downloaded_path = self.downloaded_path_callback and self.downloaded_path_callback(loan) or nil
+    local locally_available = type(downloaded_path) == "string" and downloaded_path ~= ""
     local network_ok = self.network_available_callback == nil or self.network_available_callback()
-    if loan.media_type == "audiobook" then
+    if locally_available then
+        action_text = _("Open")
+    elseif loan.media_type == "audiobook" then
         action_text = _("Audiobook — not supported")
         downloadable = false
     elseif loan.media_type == "magazine" then
@@ -419,7 +423,11 @@ function LibbyCatalog:heroWidget(width, height)
     local action_h = Screen:scaleBySize(34)
     local action_w = math.min(text_w, Screen:scaleBySize(118))
     local action
-    if downloadable then
+    if locally_available then
+        action = actionButton(action_text, action_w, action_h, true, function()
+            if self.open_callback then self.open_callback(downloaded_path) end
+        end)
+    elseif downloadable then
         action = actionButton(action_text, action_w, action_h, network_ok, function()
             if self.download_callback then self.download_callback(loan) end
         end)
@@ -465,7 +473,7 @@ function LibbyCatalog:headerWidget(width, height)
 
     local center = HorizontalGroup:new{ align = "center" }
     table.insert(center, TextWidget:new{
-        text = _("Libby") .. " (" .. refreshAgeText(self.snapshot, self.refresh_state) .. ")",
+        text = _("Libby Dashboard") .. " (" .. refreshAgeText(self.snapshot, self.refresh_state) .. ")",
         face = Font:getFace("cfont", 18),
         bold = true,
         max_width = math.max(1, middle_w - height - Screen:scaleBySize(8)),

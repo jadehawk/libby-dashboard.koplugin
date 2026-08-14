@@ -237,11 +237,23 @@ local function test_koreader_controller()
     expect_equal(controller:downloaded_loan("loan-1").expires_at, future)
 
     local removed_path
-    local ok, removed = controller:reconcile_downloaded_loans({ loans = {} }, function(path)
+    controller.settings.cleanup_mode = "dry_run"
+    local ok, removed, candidates = controller:reconcile_downloaded_loans({ loans = {} }, function(path)
+        removed_path = path
+    end)
+    assert(ok)
+    expect_equal(removed, 0)
+    expect_equal(candidates, 1)
+    assert(removed_path == nil)
+    assert(controller:downloaded_loan("loan-1") ~= nil)
+
+    controller.settings.cleanup_mode = "normal"
+    ok, removed, candidates = controller:reconcile_downloaded_loans({ loans = {} }, function(path)
         removed_path = path
     end)
     assert(ok)
     expect_equal(removed, 1)
+    expect_equal(candidates, 1)
     expect_equal(removed_path, "/books/cached.epub")
     assert(controller:downloaded_loan("loan-1") == nil)
 end

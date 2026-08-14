@@ -3,7 +3,7 @@ local UIManager = require("ui/uimanager")
 local _ = require("gettext")
 
 local LibbyBrowser = Menu:extend{
-    title = _("Libby"),
+    title = _("Libby Dashboard"),
     title_shrink_font_to_fit = true,
     title_bar_left_icon = "appbar.arrow.left",
     is_borderless = true,

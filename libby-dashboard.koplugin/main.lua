@@ -14,11 +14,13 @@ local ButtonDialog = require("ui/widget/buttondialog")
 local ConfirmBox = require("ui/widget/confirmbox")
 local InfoMessage = require("ui/widget/infomessage")
 local MultiInputDialog = require("ui/widget/multiinputdialog")
+local TextViewer = require("ui/widget/textviewer")
 local NetworkMgr = require("ui/network/manager")
 local Trapper = require("ui/trapper")
 local UIManager = require("ui/uimanager")
 local rapidjson = require("rapidjson")
 local util = require("ffi/util")
+local sha2 = require("ffi/sha2")
 local koUtil = require("util")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local _ = require("gettext")
@@ -29,6 +31,8 @@ local LibbyCatalog = require("libby_catalog")
 local LoanModel = require("loan_model")
 local PathTemplate = require("path_template")
 
+local DEV_OPTIONS_CODE_SHA256 = "5a9797edd88b30dbcd6df95d8605f487d43c15ccd11ebee1aafda677433d4c54"
+
 -- Load the vendored Adobe stack while PluginLoader still has this plugin's
 -- temporary package.path active. KOReader restores package.path after main.lua
 -- returns, so lazy-loading these modules later would lose dependencies/?.lua.
@@ -36,8 +40,8 @@ require("adobe.adobe")
 require("adobe.fulfillment")
 
 local Libby = WidgetContainer:extend{
-    name = "libby",
-    fullname = _("Libby"),
+    name = "libby-dashboard",
+    fullname = _("Libby Dashboard"),
 }
 
 local function safeDisplayText(value, max_bytes)
@@ -52,7 +56,9 @@ local function safeDisplayText(value, max_bytes)
 end
 
 function Libby:init()
-    self.settings_file = DataStorage:getSettingsDir() .. "/libby.lua"
+    local settings_dir = DataStorage:getSettingsDir() .. "/libby-dashboard"
+    koUtil.makePath(settings_dir)
+    self.settings_file = settings_dir .. "/libby-dashboard.lua"
     self.settings_store = LuaSettings:open(self.settings_file)
     self.controller = KOReaderController.new{
         reader_settings = G_reader_settings,
@@ -276,6 +282,9 @@ function Libby:downloadLoan(loan)
         local downloaded_path = fulfilled.outputPath or output
         self.controller:track_downloaded_loan(loan, downloaded_path)
         Trapper:clear()
+        if self.catalog_browser and UIManager:isWidgetShown(self.catalog_browser) then
+            self.catalog_browser:updateItems()
+        end
         UIManager:show(InfoMessage:new{ text = _("Book downloaded successfully:") .. "\n\n" .. tostring(downloaded_path) })
     end)
 end
@@ -296,7 +305,16 @@ function Libby:showLoanDetails(loan)
     table.insert(lines, _("Format: ") .. tostring(loan.adobe_format or loan.media_type or _("Unsupported")))
     local dialog
     local buttons = {}
-    if loan.adobe_format then
+    local downloaded = self.controller:downloaded_loan(loan.id)
+    local local_path = type(downloaded) == "table" and downloaded.path or nil
+    if type(local_path) == "string" and koUtil.pathExists(local_path) then
+        table.insert(buttons, { { text = _("Open"), callback = function()
+            UIManager:close(dialog)
+            if self.ui and type(self.ui.openFile) == "function" then
+                UIManager:nextTick(function() self.ui:openFile(local_path) end)
+            end
+        end } })
+    elseif loan.adobe_format then
         table.insert(buttons, { { text = _("Download"), callback = function()
             UIManager:close(dialog)
             self:downloadLoan(loan)
@@ -452,7 +470,7 @@ function Libby:offerLibbySetupRegeneration()
 end
 
 function Libby:coverCacheDir()
-    return DataStorage:getDataDir() .. "/cache/libby-covers"
+    return DataStorage:getDataDir() .. "/cache/libby-dashboard/covers"
 end
 
 function Libby:coverCachePath(loan)
@@ -654,6 +672,17 @@ function Libby:showBrowser()
         _manager = self,
         download_callback = function(loan)
             self:downloadLoan(loan)
+        end,
+        downloaded_path_callback = function(loan)
+            local downloaded = self.controller:downloaded_loan(loan and loan.id)
+            local path = type(downloaded) == "table" and downloaded.path or nil
+            if type(path) == "string" and koUtil.pathExists(path) then return path end
+            return nil
+        end,
+        open_callback = function(path)
+            if self.ui and type(self.ui.openFile) == "function" then
+                UIManager:nextTick(function() self.ui:openFile(path) end)
+            end
         end,
         network_available_callback = function()
             local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
@@ -941,24 +970,132 @@ function Libby:showShelfLayoutSettings(original_columns, original_rows, columns,
     UIManager:show(dialog)
 end
 
-function Libby:showSettings()
+function Libby:showCleanupDiagnosticPrompt()
     local dialog
-    dialog = ButtonDialog:new{
-        title = _("Libby Settings"),
+    dialog = MultiInputDialog:new{
+        title = _("Diagnostics"),
+        description = _("Enter diagnostic code."),
+        fields = { { text = "", hint = _("Code") } },
         buttons = {
-            { { text = _("Libby Setup"), callback = function() UIManager:close(dialog); self:showLibbySettings() end } },
-            { { text = _("Adobe Setup"), callback = function() UIManager:close(dialog); self:showAdobeSettings() end } },
-            { { text = _("Shelf size"), callback = function() UIManager:close(dialog); self:showShelfLayoutSettings() end } },
-            { { text = _("Book Storage"), callback = function() UIManager:close(dialog); self:showBookStorageSettings() end } },
-            { { text = _("Close"), callback = function() UIManager:close(dialog) end } },
+            {
+                { text = _("Cancel"), id = "close", callback = function() UIManager:close(dialog) end },
+                { text = _("Apply"), is_enter_default = true, callback = function()
+                    local fields = dialog:getFields()
+                    local code = koUtil.trim((fields and fields[1]) or "")
+                    if sha2.sha256(code) ~= DEV_OPTIONS_CODE_SHA256 then
+                        UIManager:close(dialog)
+                        return
+                    end
+                    local current = self.controller.settings.cleanup_mode or "normal"
+                    self.controller.settings.cleanup_mode = current == "dry_run" and "normal" or "dry_run"
+                    self.controller:save()
+                    UIManager:close(dialog)
+                    UIManager:show(InfoMessage:new{
+                        text = self.controller.settings.cleanup_mode == "dry_run"
+                            and _("Cleanup diagnostics enabled. Expired or returned loans will be detected but files will not be deleted.")
+                            or _("Cleanup diagnostics disabled. Normal loan cleanup is active."),
+                    })
+                end },
+            },
         },
     }
     UIManager:show(dialog)
 end
 
+function Libby:showCredits()
+    -- Long-pressing the final word "above" reveals the hidden developer entry point.
+    local credits = [[
+# Libby for KOReader
+
+A Libby library companion built for KOReader, bringing borrowed EPUB and PDF titles from your linked libraries into a reader-first interface.
+
+## With appreciation
+
+This project stands on ideas, research, and selected implementation patterns from several excellent open-source projects:
+
+- [Bookshelf for KOReader](https://github.com/AndyHazz/bookshelf.koplugin) — inspiration and selected UI/layout patterns for the shelf, cover grid, hero area, and pagination.
+- [Libby calibre plugin — sgmoore fork](https://github.com/sgmoore/libby-calibre-plugin) — selected Libby integration functions and protocol guidance.
+- [Original Libby calibre plugin by ping](https://github.com/ping/libby-calibre-plugin) — the upstream project on which the sgmoore fork is based and an important source of Libby protocol research.
+- [ACSM plugin for KOReader](https://github.com/kaikozlov/acsm.koplugin) — selected Adobe/ACSM implementation ideas that helped make fulfillment possible directly on KOReader devices.
+- [KOReader](https://github.com/koreader/koreader) — the reader, plugin platform, widgets, and APIs that make all of this possible.
+
+Many thanks to their authors and contributors for making their work available to the community.
+
+Libby for KOReader is an independent community project and is not affiliated with Libby, OverDrive, Adobe, or the projects credited above.
+]]
+    local viewer
+    viewer = TextViewer:new{
+        title = _("Credits"),
+        text = credits,
+        text_format = "md",
+        justified = false,
+        add_default_buttons = true,
+        text_selection_callback = function(text)
+            if koUtil.trim(text or ""):lower():gsub("[%p]+$", "") == "above" then
+                UIManager:close(viewer)
+                self:showCleanupDiagnosticPrompt()
+            end
+        end,
+    }
+    if viewer.box_widget then
+        local box_widget = viewer.box_widget
+        box_widget.html_link_tapped_callback = function(link)
+            local uri = link and (link.uri or link.link or link.href)
+            if type(uri) ~= "string" or not uri:match("^https?://") then return end
+            if type(Device.canOpenLink) == "function" and Device:canOpenLink() then
+                Device:openLink(uri)
+            else
+                UIManager:show(InfoMessage:new{
+                    text = _("Open this link on another device:") .. "\n\n" .. uri,
+                })
+            end
+        end
+        -- Resolve Credits links directly so the hidden heading target works even
+        -- when KOReader's global tap-to-follow-links preference is disabled.
+        box_widget.onTapText = function(widget, _arg, ges)
+            local pos = widget:getPosFromAbsPos(ges.pos)
+            if not pos then return end
+            local link = widget:getLinkByPosition(pos)
+            if link then
+                widget.html_link_tapped_callback(link)
+                return true
+            end
+        end
+    end
+    UIManager:show(viewer)
+end
+
+function Libby:showSettings()
+    local dialog
+    local buttons = {
+        { { text = _("Libby Setup"), callback = function() UIManager:close(dialog); self:showLibbySettings() end } },
+        { { text = _("Adobe Setup"), callback = function() UIManager:close(dialog); self:showAdobeSettings() end } },
+        { { text = _("Shelf size"), callback = function() UIManager:close(dialog); self:showShelfLayoutSettings() end } },
+    }
+    if self.controller.settings.cleanup_mode == "dry_run" then
+        table.insert(buttons, { { text = _("Book Storage"), callback = function() UIManager:close(dialog); self:showBookStorageSettings() end } })
+    end
+    table.insert(buttons, { { text = _("Credits"), callback = function() UIManager:close(dialog); self:showCredits() end } })
+    table.insert(buttons, { { text = _("Close"), callback = function() UIManager:close(dialog) end } })
+    dialog = ButtonDialog:new{
+        title = _("Libby Settings"),
+        buttons = buttons,
+    }
+    UIManager:show(dialog)
+end
+
 function Libby:addToMainMenu(menu_items)
+    local settings_items = {
+        { text = _("Libby Setup"), callback = function() self:showLibbySetup() end },
+        { text = _("Adobe Setup"), callback = function() self:showAdobeSettings() end },
+        { text = _("Shelf size"), callback = function() self:showShelfLayoutSettings() end },
+    }
+    if self.controller.settings.cleanup_mode == "dry_run" then
+        table.insert(settings_items, { text = _("Book Storage"), callback = function() self:showBookStorageSettings() end })
+    end
+    table.insert(settings_items, { text = _("Credits"), callback = function() self:showCredits() end })
     menu_items.libby = {
-        text = _("Libby"),
+        text = _("Libby Dashboard"),
         sorting_hint = "tools",
         callback = function() self:showBrowser() end,
         legacy_sub_item_table = {
@@ -981,24 +1118,7 @@ function Libby:addToMainMenu(menu_items)
             },
             {
                 text = _("Settings"),
-                sub_item_table = {
-                    {
-                        text = _("Libby Setup"),
-                        callback = function() self:showLibbySetup() end,
-                    },
-                    {
-                        text = _("Adobe Setup"),
-                        callback = function() self:showAdobeSettings() end,
-                    },
-                    {
-                        text = _("Shelf size"),
-                        callback = function() self:showShelfLayoutSettings() end,
-                    },
-                    {
-                        text = _("Book Storage"),
-                        callback = function() self:showBookStorageSettings() end,
-                    },
-                },
+                sub_item_table = settings_items,
             },
         },
     }

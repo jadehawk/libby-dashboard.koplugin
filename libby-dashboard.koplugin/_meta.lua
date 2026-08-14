@@ -1,6 +1,6 @@
 local _ = require("gettext")
 
 return {
-    fullname = _("Libby"),
+    fullname = _("Libby Dashboard"),
     description = _([[Browse Libby library loans in KOReader and manage Libby, Adobe, and book storage settings.]]),
 }
