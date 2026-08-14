@@ -32,6 +32,7 @@ local LibbyCatalog = require("libby_catalog")
 local LoanModel = require("loan_model")
 local PathTemplate = require("path_template")
 
+local PLUGIN_VERSION = "0.1.0"
 local DEV_OPTIONS_CODE_SHA256 = "5a9797edd88b30dbcd6df95d8605f487d43c15ccd11ebee1aafda677433d4c54"
 
 -- Load the vendored Adobe stack while PluginLoader still has this plugin's
@@ -40,10 +41,12 @@ local DEV_OPTIONS_CODE_SHA256 = "5a9797edd88b30dbcd6df95d8605f487d43c15ccd11ebee
 require("adobe.adobe")
 require("adobe.fulfillment")
 
-local Libby = WidgetContainer:extend{
+local LibbyDashboard = WidgetContainer:extend{
     name = "libby-dashboard",
     fullname = _("Libby Dashboard"),
 }
+
+LibbyDashboard.PLUGIN_VERSION = PLUGIN_VERSION
 
 local function safeDisplayText(value, max_bytes)
     local text = tostring(value or "")
@@ -56,7 +59,7 @@ local function safeDisplayText(value, max_bytes)
     return text
 end
 
-function Libby:init()
+function LibbyDashboard:init()
     local settings_dir = DataStorage:getSettingsDir() .. "/libby-dashboard"
     koUtil.makePath(settings_dir)
     self.settings_file = settings_dir .. "/libby-dashboard.lua"
@@ -71,7 +74,7 @@ function Libby:init()
     self.ui.menu:registerToMainMenu(self)
 end
 
-function Libby:registerAcsmProvider()
+function LibbyDashboard:registerAcsmProvider()
     local provider = {
         provider_name = self.fullname,
         provider = self.name,
@@ -107,11 +110,11 @@ function Libby:registerAcsmProvider()
     end
 end
 
-function Libby:isFileTypeSupported(file)
+function LibbyDashboard:isFileTypeSupported(file)
     return type(file) == "string" and koUtil.getFileNameSuffix(file):lower() == "acsm"
 end
 
-function Libby:externalAcsmOutputPath(file)
+function LibbyDashboard:externalAcsmOutputPath(file)
     local input = io.open(file, "rb")
     local contents = input and input:read("*a") or ""
     if input then input:close() end
@@ -126,7 +129,7 @@ function Libby:externalAcsmOutputPath(file)
     return desired
 end
 
-function Libby:openFile(file)
+function LibbyDashboard:openFile(file)
     if not self:isFileTypeSupported(file) then return end
 
     if NetworkMgr:willRerunWhenOnline(function() self:openFile(file) end) then return end
@@ -165,7 +168,7 @@ function Libby:openFile(file)
     end)
 end
 
-function Libby:showStatus()
+function LibbyDashboard:showStatus()
     local status = self.controller:status()
     local adobe = self.controller:adobe_summary()
     local adobe_status = _("not registered")
@@ -184,13 +187,13 @@ function Libby:showStatus()
     UIManager:show(InfoMessage:new{ text = table.concat(lines, "\n") })
 end
 
-function Libby:showPending(feature)
+function LibbyDashboard:showPending(feature)
     UIManager:show(InfoMessage:new{
         text = feature .. "\n\n" .. _("The KOReader network/UI adapter is still being connected to the tested Libby core."),
     })
 end
 
-function Libby:showLibraryCards()
+function LibbyDashboard:showLibraryCards()
     NetworkMgr:runWhenOnline(function()
         local state, err = self.controller:sync_libby()
         if not state then
@@ -241,22 +244,22 @@ local function moveTree(source, destination)
     return removeTree(source)
 end
 
-function Libby:historyDir()
+function LibbyDashboard:historyDir()
     return DataStorage:getSettingsDir() .. "/libby-dashboard/history"
 end
 
-function Libby:historySidecarPath(loan_id)
+function LibbyDashboard:historySidecarPath(loan_id)
     if loan_id == nil then return nil end
     return self:historyDir() .. "/" .. tostring(loan_id):gsub("[^%w%._%-]", "_") .. ".sdr"
 end
 
-function Libby:restoreReadingHistory(loan, path)
+function LibbyDashboard:restoreReadingHistory(loan, path)
     local history = self:historySidecarPath(loan and loan.id)
     if not history or not lfs.attributes(history) then return true end
     return moveTree(history, DocSettings:getSidecarDir(path))
 end
 
-function Libby:pruneEmptyBookFolders(path)
+function LibbyDashboard:pruneEmptyBookFolders(path)
     local root = self.controller.reader_settings:readSetting("home_dir")
     local dir = util.dirname(path)
     while dir and dir ~= "" and dir ~= root and dir:sub(1, #root + 1) == root .. "/" do
@@ -269,7 +272,7 @@ function Libby:pruneEmptyBookFolders(path)
     end
 end
 
-function Libby:removeTrackedBook(record)
+function LibbyDashboard:removeTrackedBook(record)
     local path = type(record) == "table" and record.path or record
     if type(path) ~= "string" or path == "" then return end
     local loan_id = type(record) == "table" and record.loan_id or nil
@@ -284,7 +287,7 @@ function Libby:removeTrackedBook(record)
     return true
 end
 
-function Libby:downloadLoan(loan)
+function LibbyDashboard:downloadLoan(loan)
     if not loan or not loan.adobe_format then
         local kind = loan and loan.media_type
         local message = kind == "audiobook" and _("Audiobooks are not currently supported by the Libby plugin.")
@@ -359,7 +362,7 @@ function Libby:downloadLoan(loan)
     end)
 end
 
-function Libby:showLoanDetails(loan)
+function LibbyDashboard:showLoanDetails(loan)
     local lines = { loan.title or _("Untitled") }
     if loan.author then table.insert(lines, _("Author: ") .. tostring(loan.author)) end
     if loan.library then table.insert(lines, _("Library: ") .. tostring(loan.library)) end
@@ -395,7 +398,7 @@ function Libby:showLoanDetails(loan)
     UIManager:show(dialog)
 end
 
-function Libby:showLoans()
+function LibbyDashboard:showLoans()
     NetworkMgr:runWhenOnline(function()
         local state, err = self.controller:sync_libby()
         if not state then
@@ -410,7 +413,7 @@ function Libby:showLoans()
     end)
 end
 
-function Libby:testConnection()
+function LibbyDashboard:testConnection()
     NetworkMgr:runWhenOnline(function()
         local ok, err = self.controller:test_libby_connection()
         UIManager:show(InfoMessage:new{
@@ -420,7 +423,7 @@ function Libby:testConnection()
     end)
 end
 
-function Libby:showLibbySetup()
+function LibbyDashboard:showLibbySetup()
     UIManager:show(ConfirmBox:new{
         text = _("On an already signed-in Libby device, open:\n\nMenu → Copy To Another Device → Enter Setup Code\n\nThe setup code is valid for only 60 seconds. Have that screen ready before generating the code."),
         cancel_text = _("Cancel"),
@@ -429,7 +432,7 @@ function Libby:showLibbySetup()
     })
 end
 
-function Libby:generateLibbySetupCode()
+function LibbyDashboard:generateLibbySetupCode()
     NetworkMgr:runWhenOnline(function()
         local setup, err = self.controller:begin_libby_setup()
         if not setup then
@@ -440,7 +443,7 @@ function Libby:generateLibbySetupCode()
     end)
 end
 
-function Libby:showLibbySetupCountdown()
+function LibbyDashboard:showLibbySetupCountdown()
     local pending = self.controller:pending_libby_setup()
     if not pending or pending.remaining <= 0 then
         self.controller:clear_pending_libby_setup()
@@ -498,7 +501,7 @@ function Libby:showLibbySetupCountdown()
     UIManager:scheduleIn(1, tick)
 end
 
-function Libby:verifyLibbySetupCode()
+function LibbyDashboard:verifyLibbySetupCode()
     NetworkMgr:runWhenOnline(function()
         local state, err = self.controller:complete_libby_setup()
         if not state then
@@ -530,7 +533,7 @@ function Libby:verifyLibbySetupCode()
     end)
 end
 
-function Libby:offerLibbySetupRegeneration()
+function LibbyDashboard:offerLibbySetupRegeneration()
     UIManager:show(ConfirmBox:new{
         text = _("The 60-second Libby setup code has expired."),
         cancel_text = _("Cancel"),
@@ -539,11 +542,11 @@ function Libby:offerLibbySetupRegeneration()
     })
 end
 
-function Libby:coverCacheDir()
+function LibbyDashboard:coverCacheDir()
     return DataStorage:getDataDir() .. "/cache/libby-dashboard/covers"
 end
 
-function Libby:coverCachePath(loan)
+function LibbyDashboard:coverCachePath(loan)
     if type(loan) ~= "table" or not loan.cover_url then return nil end
     local key = tostring(loan.id or loan.title or loan.cover_url):gsub("[^%w%-_]", "_")
     local path = self:coverCacheDir() .. "/" .. key .. ".jpg"
@@ -555,7 +558,7 @@ function Libby:coverCachePath(loan)
     return nil
 end
 
-function Libby:prefetchBrowserCovers(browser)
+function LibbyDashboard:prefetchBrowserCovers(browser)
     local snapshot = browser and browser.snapshot or nil
     if type(snapshot) ~= "table" or type(snapshot.loans) ~= "table" then return end
     local missing = {}
@@ -600,7 +603,7 @@ function Libby:prefetchBrowserCovers(browser)
     end)
 end
 
-function Libby:storagePreview(template)
+function LibbyDashboard:storagePreview(template)
     local model = {
         title = "The Way of Kings",
         author = "Brandon Sanderson",
@@ -615,7 +618,7 @@ function Libby:storagePreview(template)
     })
 end
 
-function Libby:applyBookPathTemplate(template)
+function LibbyDashboard:applyBookPathTemplate(template)
     local ok, err = self.controller:set_book_path_template(template)
     if not ok then
         UIManager:show(InfoMessage:new{ text = _("Invalid destination template:") .. "\n\n" .. tostring(err) })
@@ -627,7 +630,7 @@ function Libby:applyBookPathTemplate(template)
     })
 end
 
-function Libby:showCustomBookStorage()
+function LibbyDashboard:showCustomBookStorage()
     local current = self.controller.settings.book_path_template or PathTemplate.DEFAULT_TEMPLATE
     local dialog
     dialog = MultiInputDialog:new{
@@ -657,7 +660,7 @@ function Libby:showCustomBookStorage()
     dialog:onShowKeyboard()
 end
 
-function Libby:showBookStorageSettings()
+function LibbyDashboard:showBookStorageSettings()
     local current = self.controller.settings.book_path_template or PathTemplate.DEFAULT_TEMPLATE
     local dialog
     local function preset(label, template)
@@ -680,7 +683,7 @@ function Libby:showBookStorageSettings()
     UIManager:show(dialog)
 end
 
-function Libby:refreshBrowserSnapshot(browser)
+function LibbyDashboard:refreshBrowserSnapshot(browser)
     local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
     local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
     if not (wifi_on and connected) then
@@ -733,7 +736,7 @@ function Libby:refreshBrowserSnapshot(browser)
     end)
 end
 
-function Libby:showBrowser()
+function LibbyDashboard:showBrowser()
     if self.catalog_browser ~= nil then return end
 
     self.catalog_browser = LibbyCatalog:new{
@@ -794,7 +797,7 @@ function Libby:showBrowser()
     end
 end
 
-function Libby:showLibbySettings()
+function LibbyDashboard:showLibbySettings()
     local dialog
     local authenticated = self.controller:libby_authenticated()
     dialog = ButtonDialog:new{
@@ -829,7 +832,7 @@ function Libby:showLibbySettings()
     UIManager:show(dialog)
 end
 
-function Libby:showByteBooksLogin()
+function LibbyDashboard:showByteBooksLogin()
     NetworkMgr:runWhenConnected(function()
         local methods, methods_err = self.controller:adobe_sign_in_methods()
         if not methods then
@@ -908,7 +911,7 @@ function Libby:showByteBooksLogin()
     end)
 end
 
-function Libby:showAdobeSettings()
+function LibbyDashboard:showAdobeSettings()
     local dialog
     local summary = self.controller:adobe_summary()
     local status_text = _("Status: not registered")
@@ -982,7 +985,7 @@ function Libby:showAdobeSettings()
     UIManager:show(dialog)
 end
 
-function Libby:showShelfLayoutSettings(original_columns, original_rows, columns, rows)
+function LibbyDashboard:showShelfLayoutSettings(original_columns, original_rows, columns, rows)
     original_columns = original_columns or tonumber(self.controller.settings.libby_shelf_columns) or 4
     original_rows = original_rows or tonumber(self.controller.settings.libby_shelf_rows) or 2
     columns = math.max(2, math.min(8, tonumber(columns) or original_columns))
@@ -1036,7 +1039,7 @@ function Libby:showShelfLayoutSettings(original_columns, original_rows, columns,
     UIManager:show(dialog)
 end
 
-function Libby:showCleanupDiagnosticPrompt()
+function LibbyDashboard:showCleanupDiagnosticPrompt()
     local dialog
     dialog = MultiInputDialog:new{
         title = _("Diagnostics"),
@@ -1068,7 +1071,7 @@ function Libby:showCleanupDiagnosticPrompt()
     UIManager:show(dialog)
 end
 
-function Libby:showCredits()
+function LibbyDashboard:showCredits()
     -- Long-pressing the final word "above" reveals the hidden developer entry point.
     local credits = [[
 # Libby Dashboard for KOReader
@@ -1131,7 +1134,7 @@ Libby Dashboard for KOReader is an independent community project and is not affi
     UIManager:show(viewer)
 end
 
-function Libby:showSettings()
+function LibbyDashboard:showSettings()
     local dialog
     local buttons = {
         { { text = _("Libby Setup"), callback = function() UIManager:close(dialog); self:showLibbySettings() end } },
@@ -1150,7 +1153,7 @@ function Libby:showSettings()
     UIManager:show(dialog)
 end
 
-function Libby:addToMainMenu(menu_items)
+function LibbyDashboard:addToMainMenu(menu_items)
     local settings_items = {
         { text = _("Libby Setup"), callback = function() self:showLibbySetup() end },
         { text = _("Adobe/ByteBooks Setup"), callback = function() self:showAdobeSettings() end },
@@ -1190,4 +1193,4 @@ function Libby:addToMainMenu(menu_items)
     }
 end
 
-return Libby
+return LibbyDashboard

@@ -1,74 +1,66 @@
-# CLI Libby Dashboard / KOReader Libby Core
+# Libby Dashboard for KOReader
 
-This repository is the shared development home for a Libby client that can be exercised from Python and Lua, with the Lua implementation intended to become the core of a self-contained KOReader plugin.
+Libby Dashboard is a self-contained KOReader plugin for browsing and reading supported loans from libraries linked to a Libby account. It brings the loan shelf directly to the e-reader instead of requiring a separate computer for normal borrowing and fulfillment.
 
-## Product goal
+Current plugin version: **0.1.0**
 
-The final KOReader plugin should let a user:
+## What it does
 
-- authenticate by generating the modern 8-digit Libby pointer setup code on the new device;
-- view linked library cards;
-- browse current loans as a list or cover grid;
-- show loan time remaining next to each title;
-- download the Adobe EPUB/PDF ACSM for a selected loan directly on the reader;
-- register itself as an `.acsm` handler;
-- manage Libby credentials independently from Adobe registration state.
+- Authenticates with Libby using Libby's device setup-code flow.
+- Displays all linked library cards, plus a combined **All** shelf.
+- Presents loans in a configurable cover grid with a selected-book details panel.
+- Shows title, author, series information, format, lending library, and remaining loan time when available.
+- Downloads supported EPUB and PDF loans and opens the resulting book directly in KOReader.
+- Supports Adobe/ByteBooks authorization, including ByteBooks username/password authorization and portable Adobe authorization import/export.
+- Registers as an ACSM handler, so supported external `.acsm` files can also be fulfilled and opened through the plugin.
+- Caches the Libby library snapshot and covers for useful offline browsing.
+- Tracks downloaded loans so the local shelf can follow the state of the Libby loan.
 
-The validated Libby protocol is documented in `LIBBY_CURRENT_PROTOCOL_HANDOFF.md`.
+Audiobooks and magazines may appear on the shelf with their Libby cover and metadata, but they are not currently downloadable/readable through Libby Dashboard.
 
-## Credential and registration settings
+## How book loans are handled
 
-Libby and Adobe state are intentionally separate.
+Libby Dashboard treats downloaded books as library loans rather than permanent entries in its managed library. It records successfully downloaded loans and compares those records with the current Libby loan shelf and the loan expiration information.
 
-### Libby
+When a managed loan expires or is returned early and disappears from the Libby account, Libby Dashboard removes the downloaded EPUB/PDF from its managed book location. Empty folders created by the configured storage path are cleaned up as well.
 
-The UI must provide:
+KOReader reading history is handled separately from the borrowed book file. Before a managed book is removed, its `.sdr` sidecar directory is moved into Libby Dashboard's private history storage. That preserves KOReader reading progress, annotations, highlights, and other document settings. If the same title is borrowed and downloaded again later, the saved sidecar is restored beside the new book so KOReader can continue with the previous reading state.
 
-- connection status;
-- generate/re-authenticate setup code;
-- reset Libby credentials.
+A book that a user manually moves outside the location tracked by Libby Dashboard is no longer under the plugin's file-management control.
 
-Resetting Libby credentials removes the persisted Libby identity and all temporary setup state, but does not touch Adobe registration.
+## Libby and Adobe/ByteBooks accounts
 
-### Adobe registration
+Libby authentication and Adobe/ByteBooks authorization are intentionally separate. Resetting the Libby account does not silently reset Adobe/ByteBooks authorization.
 
-The UI must provide:
+ByteBooks account authorization is preferred when configured because the same account can authorize multiple supported devices. Anonymous Adobe authorization is also supported. Authorization can be exported and imported when needed; exported authorization data contains private credentials and should be stored securely.
 
-- registration status;
-- export Adobe registration;
-- import Adobe registration;
-- reset Adobe registration.
+## Storage
 
-The portable Adobe registration profile is versioned and contains the fields used by the validated `acsm.koplugin` activation implementation: `deviceKey`, `privateLicenseKey`, `licenseCert`, `user`, `username`, `pkcs12`, `deviceUUID`, `fingerprint`, `authCert`, and `activationURL`.
+Plugin settings, cached state, covers, and preserved reading history are kept under KOReader's settings directory in the dedicated `libby-dashboard` folder.
 
-Export/import is important for users with multiple e-readers. A loan fulfilled under one anonymous Adobe authorization can be rejected when another independently-created anonymous authorization attempts to fulfill the same entitlement. Devices that intentionally share the same Adobe registration profile can present the same authorization identity instead of creating unrelated anonymous registrations.
-
-Adobe registration exports contain private credentials and must be treated as sensitive. The UI should warn before reset or export. Resetting Adobe registration must not silently delete Libby credentials.
-
-## Current source layout
+The default downloaded-book layout is:
 
 ```text
-lua/
-  adobe_profile.lua    portable Adobe registration profile validation/reset
-  libby_state.lua      Libby credential state, loan time, Adobe format helpers
-  spec/                Lua 5.1-compatible tests
-
-python/
-  libby_dashboard/
-    state.py            Python reference implementation of the same state rules
-  tests/
+HOME/Libby Books/<author:first>/<series>/<title>.<ext>
 ```
-
-## Development runtimes
-
-Lua compatibility target is Lua 5.1 / LuaJIT. On the current development machine:
-
 ```text
-wsl bash -lc "/usr/bin/lua5.1 lua/spec/state_test.lua"
+<author:first> Refers to the First Author incase of Multi-Author book.
 ```
 
-The Python implementation serves as a protocol/debugging reference; the Lua implementation is the basis for the eventual KOReader UI.
+The path can be customized in the plugin using the available metadata tokens.
 
-## ACSM boundary
+## Development
 
-The Libby client can legitimately stop at downloading the ACSM returned by the loan fulfillment flow. Adobe activation/fulfillment is kept as a separate internal subsystem so `.acsm` handling can also work for manually supplied ACSM files and so Libby account reset does not affect Adobe registration.
+The repository contains the installable KOReader plugin in `libby-dashboard.koplugin/` together with Lua protocol/core code and tests used during development. The compatibility target is Lua 5.1 / LuaJIT as used by KOReader.
+
+The implementation has also benefited from selected ideas and functions from the Libby calibre plugin projects, `acsm.koplugin`, and UI/layout ideas from `bookshelf.koplugin`. See the in-plugin Credits page for project links and acknowledgements.
+
+## AI-assisted development disclaimer
+
+Libby Dashboard has been put together with substantial development assistance from OpenAI's ChatGPT. AI assistance has been used while designing, implementing, debugging, reviewing, and testing portions of the plugin.
+
+If you do not want to use software developed with AI assistance, please do not install Libby Dashboard. The source is available for review so you can make your own decision before running it on your device.
+
+## Project status
+
+Libby Dashboard is an independent personal project. It is not affiliated with or endorsed by Libby, OverDrive, Adobe, ByteBooks, KOReader, or the projects acknowledged in the Credits page.
