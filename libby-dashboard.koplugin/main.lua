@@ -19,6 +19,7 @@ local NetworkMgr = require("ui/network/manager")
 local Trapper = require("ui/trapper")
 local UIManager = require("ui/uimanager")
 local rapidjson = require("rapidjson")
+local lfs = require("libs/libkoreader-lfs")
 local util = require("ffi/util")
 local sha2 = require("ffi/sha2")
 local koUtil = require("util")
@@ -209,10 +210,78 @@ function Libby:showLibraryCards()
     end)
 end
 
-function Libby:removeTrackedBook(path)
+local function removeTree(path)
+    local attr = lfs.attributes(path)
+    if not attr then return true end
+    if attr.mode ~= "directory" then return os.remove(path) end
+    for name in lfs.dir(path) do
+        if name ~= "." and name ~= ".." and not removeTree(path .. "/" .. name) then return nil end
+    end
+    return lfs.rmdir(path)
+end
+
+local function copyTree(source, destination)
+    local attr = lfs.attributes(source)
+    if not attr then return nil end
+    if attr.mode ~= "directory" then return util.copyFile(source, destination) ~= nil end
+    if not koUtil.makePath(destination) then return nil end
+    for name in lfs.dir(source) do
+        if name ~= "." and name ~= ".." and not copyTree(source .. "/" .. name, destination .. "/" .. name) then return nil end
+    end
+    return true
+end
+
+local function moveTree(source, destination)
+    if not lfs.attributes(source) then return true end
+    removeTree(destination)
+    local parent = util.dirname(destination)
+    if parent and parent ~= "" and not koUtil.makePath(parent) then return nil end
+    if os.rename(source, destination) then return true end
+    if not copyTree(source, destination) then return nil end
+    return removeTree(source)
+end
+
+function Libby:historyDir()
+    return DataStorage:getSettingsDir() .. "/libby-dashboard/history"
+end
+
+function Libby:historySidecarPath(loan_id)
+    if loan_id == nil then return nil end
+    return self:historyDir() .. "/" .. tostring(loan_id):gsub("[^%w%._%-]", "_") .. ".sdr"
+end
+
+function Libby:restoreReadingHistory(loan, path)
+    local history = self:historySidecarPath(loan and loan.id)
+    if not history or not lfs.attributes(history) then return true end
+    return moveTree(history, DocSettings:getSidecarDir(path))
+end
+
+function Libby:pruneEmptyBookFolders(path)
+    local root = self.controller.reader_settings:readSetting("home_dir")
+    local dir = util.dirname(path)
+    while dir and dir ~= "" and dir ~= root and dir:sub(1, #root + 1) == root .. "/" do
+        local empty = true
+        for name in lfs.dir(dir) do
+            if name ~= "." and name ~= ".." then empty = false break end
+        end
+        if not empty or not lfs.rmdir(dir) then break end
+        dir = util.dirname(dir)
+    end
+end
+
+function Libby:removeTrackedBook(record)
+    local path = type(record) == "table" and record.path or record
     if type(path) ~= "string" or path == "" then return end
-    pcall(DocSettings.updateLocation, DocSettings, path, nil)
+    local loan_id = type(record) == "table" and record.loan_id or nil
+    local sidecar = DocSettings:getSidecarDir(path)
+    local history = self:historySidecarPath(loan_id)
+    if history and lfs.attributes(sidecar) then
+        koUtil.makePath(self:historyDir())
+        if not moveTree(sidecar, history) then return false end
+    end
     os.remove(path)
+    self:pruneEmptyBookFolders(path)
+    return true
 end
 
 function Libby:downloadLoan(loan)
@@ -280,6 +349,7 @@ function Libby:downloadLoan(loan)
         end
         os.remove(destination)
         local downloaded_path = fulfilled.outputPath or output
+        self:restoreReadingHistory(loan, downloaded_path)
         self.controller:track_downloaded_loan(loan, downloaded_path)
         Trapper:clear()
         if self.catalog_browser and UIManager:isWidgetShown(self.catalog_browser) then

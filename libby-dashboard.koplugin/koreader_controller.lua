@@ -252,11 +252,14 @@ function KOReaderController:reconcile_downloaded_loans(snapshot, remove_book)
         if expired or not active[key] then
             candidates = candidates + 1
             if not dry_run then
+                local cleanup_ok = true
                 if type(remove_book) == "function" and type(record.path) == "string" then
-                    remove_book(record.path)
+                    cleanup_ok = remove_book(record) ~= false
                 end
-                records[key] = nil
-                removed = removed + 1
+                if cleanup_ok then
+                    records[key] = nil
+                    removed = removed + 1
+                end
             end
         end
     end
