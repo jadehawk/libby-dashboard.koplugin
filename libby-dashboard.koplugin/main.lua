@@ -851,7 +851,7 @@ function Libby:showAdobeSettings()
         end
     end
     dialog = ButtonDialog:new{
-        title = _("Adobe Setup") .. "\n" .. status_text,
+        title = _("Adobe/ByteBooks Setup") .. "\n" .. status_text,
         buttons = {
             { { text = _("Register device (anonymous)"), callback = function()
                 UIManager:close(dialog)
@@ -866,10 +866,6 @@ function Libby:showAdobeSettings()
             { { text = _("Sign in with ByteBooks account"), callback = function()
                 UIManager:close(dialog)
                 self:showByteBooksLogin()
-            end } },
-            { { text = _("Adobe Status"), callback = function()
-                UIManager:close(dialog)
-                self:showStatus()
             end } },
             { { text = _("Export authorization"), callback = function()
                 local path, err = self.controller:export_adobe_registration()
@@ -1005,7 +1001,7 @@ end
 function Libby:showCredits()
     -- Long-pressing the final word "above" reveals the hidden developer entry point.
     local credits = [[
-# Libby for KOReader
+# Libby Dashboard for KOReader
 
 A Libby library companion built for KOReader, bringing borrowed EPUB and PDF titles from your linked libraries into a reader-first interface.
 
@@ -1021,7 +1017,7 @@ This project stands on ideas, research, and selected implementation patterns fro
 
 Many thanks to their authors and contributors for making their work available to the community.
 
-Libby for KOReader is an independent community project and is not affiliated with Libby, OverDrive, Adobe, or the projects credited above.
+Libby Dashboard for KOReader is an independent community project and is not affiliated with Libby, OverDrive, Adobe, or the projects credited above.
 ]]
     local viewer
     viewer = TextViewer:new{
@@ -1069,7 +1065,7 @@ function Libby:showSettings()
     local dialog
     local buttons = {
         { { text = _("Libby Setup"), callback = function() UIManager:close(dialog); self:showLibbySettings() end } },
-        { { text = _("Adobe Setup"), callback = function() UIManager:close(dialog); self:showAdobeSettings() end } },
+        { { text = _("Adobe/ByteBooks Setup"), callback = function() UIManager:close(dialog); self:showAdobeSettings() end } },
         { { text = _("Shelf size"), callback = function() UIManager:close(dialog); self:showShelfLayoutSettings() end } },
     }
     if self.controller.settings.cleanup_mode == "dry_run" then
@@ -1087,7 +1083,7 @@ end
 function Libby:addToMainMenu(menu_items)
     local settings_items = {
         { text = _("Libby Setup"), callback = function() self:showLibbySetup() end },
-        { text = _("Adobe Setup"), callback = function() self:showAdobeSettings() end },
+        { text = _("Adobe/ByteBooks Setup"), callback = function() self:showAdobeSettings() end },
         { text = _("Shelf size"), callback = function() self:showShelfLayoutSettings() end },
     }
     if self.controller.settings.cleanup_mode == "dry_run" then
