@@ -14,6 +14,21 @@ Current plugin version: **0.1.0**
 
 After the initial installation, future releases can be installed directly from **Libby Dashboard Settings → Check for Updates**.
 
+## Screenshots
+
+<p align="center">
+  <img src="assets/01-Main%20UI.png" alt="Libby Dashboard main UI" width="350" height="550">
+  <img src="assets/02-Main%20UI.png" alt="Libby Dashboard book details" width="350" height="550">
+</p>
+<p align="center">
+  <img src="assets/03-Settings.png" alt="Libby Dashboard settings" width="350" height="550">
+  <img src="assets/04-Libby%20Setup.png" alt="Libby setup" width="350" height="550">
+</p>
+<p align="center">
+  <img src="assets/05-Libby%20Setup.png" alt="Libby setup verification" width="350" height="550">
+  <img src="assets/06-AdobeBytebooks%20Setup.png" alt="Adobe and ByteBooks setup" width="350" height="550">
+</p>
+
 ## What it does
 
 - Authenticates with Libby using Libby's device setup-code flow.
@@ -42,7 +57,11 @@ A book that a user manually moves outside the location tracked by Libby Dashboar
 
 Libby authentication and Adobe/ByteBooks authorization are intentionally separate. Resetting the Libby account does not silently reset Adobe/ByteBooks authorization.
 
-ByteBooks account authorization is preferred when configured because the same account can authorize multiple supported devices. Anonymous Adobe authorization is also supported. Authorization can be exported and imported when needed; exported authorization data contains private credentials and should be stored securely.
+ByteBooks account authorization is the preferred method because the same account can authorize multiple supported devices. Anonymous Adobe authorization is also supported.
+
+If Libby Dashboard detects an existing anonymous Adobe authorization created by the KOReader `acsm.koplugin`, it will use that authorization initially rather than creating another one. The user can still replace it at any time by generating a new anonymous authorization or, preferably, signing in with a ByteBooks account.
+
+Authorization can be exported and imported when needed; exported authorization data contains private credentials and should be stored securely.
 
 ## Storage
 

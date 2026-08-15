@@ -5,6 +5,8 @@
 
 !/.gitignore
 !/README.md
+!/assets/
+!/assets/**
 !/libby-dashboard.koplugin/
 !/libby-dashboard.koplugin/**
 !/.github/
