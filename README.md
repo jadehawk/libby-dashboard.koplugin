@@ -26,7 +26,7 @@ After the initial installation, future releases can be installed directly from *
 </p>
 <p align="center">
   <img src="assets/05-Libby%20Setup.png" alt="Libby setup verification" width="350" height="550">
-  <img src="assets/06-AdobeBytebooks%20Setup.png" alt="Adobe and ByteBooks setup" width="350" height="550">
+  <img src="assets/06a-AdobeBytebooks%20Setup.png" alt="Adobe and ByteBooks setup" width="350" height="550">
 </p>
 
 ## What it does
