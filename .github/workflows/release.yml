@@ -34,6 +34,11 @@ jobs:
             exit 1
           fi
           tag="v${version}"
+          readme_version=$(sed -n 's/^Current plugin version: \*\*\([^*]*\)\*\*$/\1/p' README.md)
+          if [[ "$readme_version" != "$version" ]]; then
+            echo "README version must match PLUGIN_VERSION; README=$readme_version plugin=$version" >&2
+            exit 1
+          fi
           if [[ "${{ github.event_name }}" == "push" ]]; then
             subject=$(git log -1 --pretty=%s)
             if [[ "$subject" != "$tag" ]]; then
