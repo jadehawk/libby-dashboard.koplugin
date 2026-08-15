@@ -1,0 +1,90 @@
+name: Release Libby Dashboard KOReader Plugin
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: libby-dashboard-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read and validate plugin version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^local PLUGIN_VERSION = "\([^"]*\)"/\1/p' libby-dashboard.koplugin/main.lua)
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "PLUGIN_VERSION must be a semantic version (x.y.z); got: $version" >&2
+            exit 1
+          fi
+          tag="v${version}"
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            subject=$(git log -1 --pretty=%s)
+            if [[ "$subject" != "$tag" ]]; then
+              echo "Release commit subject must exactly match ${tag}; got: ${subject}" >&2
+              exit 1
+            fi
+          fi
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Tag ${tag} already exists." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Install Lua 5.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y lua5.1
+
+      - name: Validate plugin Lua syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          find libby-dashboard.koplugin -maxdepth 1 -type f -name '*.lua' -print0 | sort -z | xargs -0 -n1 /usr/bin/luac5.1 -p
+
+      - name: Validate plugin package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f libby-dashboard.koplugin/_meta.lua
+          test -f libby-dashboard.koplugin/main.lua
+          test -f libby-dashboard.koplugin/libby_dashboard_updater.lua
+
+      - name: Build plugin archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip -qr libby-dashboard.koplugin.zip libby-dashboard.koplugin
+          test "$(unzip -Z1 libby-dashboard.koplugin.zip | head -n1)" = "libby-dashboard.koplugin/"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          git tag "$tag"
+          git push origin "$tag"
+          gh release create "$tag" libby-dashboard.koplugin.zip \
+            --title "$tag" \
+            --generate-notes

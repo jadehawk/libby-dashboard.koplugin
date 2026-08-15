@@ -433,14 +433,18 @@ function LibbyDashboard:showLibbySetup()
 end
 
 function LibbyDashboard:generateLibbySetupCode()
-    NetworkMgr:runWhenOnline(function()
-        local setup, err = self.controller:begin_libby_setup()
-        if not setup then
-            UIManager:show(InfoMessage:new{ text = _("Could not generate Libby setup code:") .. "\n\n" .. tostring(err) })
-            return
-        end
-        self:showLibbySetupCountdown()
-    end)
+    local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
+    local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
+    if not (wifi_on and connected) then
+        UIManager:show(InfoMessage:new{ text = _("Wi-Fi is required to generate a Libby setup code. Connect to Wi-Fi and try again.") })
+        return
+    end
+    local setup, err = self.controller:begin_libby_setup()
+    if not setup then
+        UIManager:show(InfoMessage:new{ text = _("Could not generate Libby setup code:") .. string.char(10, 10) .. tostring(err) })
+        return
+    end
+    self:showLibbySetupCountdown()
 end
 
 function LibbyDashboard:showLibbySetupCountdown()
@@ -530,6 +534,9 @@ function LibbyDashboard:verifyLibbySetupCode()
                 .. _("Library cards found: ") .. tostring(#(state.cards or {})) .. "\n"
                 .. _("Current loans found: ") .. tostring(#(state.loans or {})),
         })
+        if self.catalog_browser and UIManager:isWidgetShown(self.catalog_browser) then
+            self:refreshBrowserSnapshot(self.catalog_browser)
+        end
     end)
 end
 
@@ -736,6 +743,26 @@ function LibbyDashboard:refreshBrowserSnapshot(browser)
     end)
 end
 
+function LibbyDashboard:scheduleBrowserRefresh(browser)
+    if self.catalog_refresh_tick then UIManager:unschedule(self.catalog_refresh_tick) end
+    local tick
+    tick = function()
+        if browser ~= self.catalog_browser or not UIManager:isWidgetShown(browser) then
+            if self.catalog_refresh_tick == tick then self.catalog_refresh_tick = nil end
+            return
+        end
+        local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
+        local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
+        if wifi_on and connected and self.controller:libby_authenticated()
+                and browser.refresh_state ~= "refreshing" then
+            self:refreshBrowserSnapshot(browser)
+        end
+        UIManager:scheduleIn(300, tick)
+    end
+    self.catalog_refresh_tick = tick
+    UIManager:scheduleIn(300, tick)
+end
+
 function LibbyDashboard:showBrowser()
     if self.catalog_browser ~= nil then return end
 
@@ -775,11 +802,16 @@ function LibbyDashboard:showBrowser()
             self:showSettings()
         end,
         close_callback = function()
+            if self.catalog_refresh_tick then
+                UIManager:unschedule(self.catalog_refresh_tick)
+                self.catalog_refresh_tick = nil
+            end
             UIManager:close(self.catalog_browser)
             self.catalog_browser = nil
         end,
     }
     UIManager:show(self.catalog_browser)
+    self:scheduleBrowserRefresh(self.catalog_browser)
     self:prefetchBrowserCovers(self.catalog_browser)
 
     local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
@@ -927,16 +959,26 @@ function LibbyDashboard:showAdobeSettings()
         title = _("Adobe/ByteBooks Setup") .. "\n" .. status_text,
         buttons = {
             { { text = _("Register device (anonymous)"), callback = function()
+                local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
+                local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
+                if not (wifi_on and connected) then
+                    UIManager:show(InfoMessage:new{ text = _("Wi-Fi is required to register this device. Connect to Wi-Fi and try again.") })
+                    return
+                end
                 UIManager:close(dialog)
-                NetworkMgr:runWhenConnected(function()
-                    local registered, err = self.controller:create_adobe_registration()
-                    UIManager:show(InfoMessage:new{
-                        text = registered and _("Anonymous Adobe registration created successfully.")
-                            or (_("Could not create Adobe registration:") .. "\n\n" .. tostring(err)),
-                    })
-                end)
+                local registered, err = self.controller:create_adobe_registration()
+                UIManager:show(InfoMessage:new{
+                    text = registered and _("Anonymous Adobe registration created successfully.")
+                        or (_("Could not create Adobe registration:") .. string.char(10, 10) .. tostring(err)),
+                })
             end } },
             { { text = _("Sign in with ByteBooks account"), callback = function()
+                local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
+                local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
+                if not (wifi_on and connected) then
+                    UIManager:show(InfoMessage:new{ text = _("Wi-Fi is required to sign in with ByteBooks. Connect to Wi-Fi and try again.") })
+                    return
+                end
                 UIManager:close(dialog)
                 self:showByteBooksLogin()
             end } },
@@ -951,8 +993,8 @@ function LibbyDashboard:showAdobeSettings()
             { { text = _("Import authorization"), callback = function()
                 local path = self.controller:adobe_export_path()
                 UIManager:show(ConfirmBox:new{
-                    text = _("Import Adobe authorization from:") .. "\n\n" .. path
-                        .. "\n\n" .. _("This replaces the Adobe authorization currently used by Libby."),
+                    text = _("Import Adobe/ByteBooks Authorization from:") .. "\n\n" .. path
+                        .. "\n\n" .. _("This replaces the Adobe/ByteBooks authorization currently used by Libby Dashboard."),
                     cancel_text = _("Cancel"),
                     ok_text = _("Import"),
                     ok_callback = function()
@@ -961,6 +1003,10 @@ function LibbyDashboard:showAdobeSettings()
                             text = imported and _("Adobe authorization imported successfully.")
                                 or (_("Could not import Adobe authorization:") .. "\n\n" .. tostring(err)),
                         })
+                        if imported then
+                            UIManager:close(dialog)
+                            self:showAdobeSettings()
+                        end
                     end,
                 })
             end } },
@@ -1144,10 +1190,14 @@ function LibbyDashboard:showSettings()
     if self.controller.settings.cleanup_mode == "dry_run" then
         table.insert(buttons, { { text = _("Book Storage"), callback = function() UIManager:close(dialog); self:showBookStorageSettings() end } })
     end
+    table.insert(buttons, { { text = "──────────────", enabled = false } })
+    table.insert(buttons, { { text = _("Check for Updates"), callback = function()
+        require("libby_dashboard_updater").check(self, true)
+    end } })
     table.insert(buttons, { { text = _("Credits"), callback = function() UIManager:close(dialog); self:showCredits() end } })
     table.insert(buttons, { { text = _("Close"), callback = function() UIManager:close(dialog) end } })
     dialog = ButtonDialog:new{
-        title = _("Libby Settings"),
+        title = _("Libby Dashboard") .. " (v" .. PLUGIN_VERSION .. ")",
         buttons = buttons,
     }
     UIManager:show(dialog)

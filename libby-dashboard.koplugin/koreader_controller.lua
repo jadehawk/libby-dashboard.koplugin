@@ -450,7 +450,7 @@ function KOReaderController:ensure_adobe_registration()
 end
 
 function KOReaderController:adobe_export_path()
-    return KOReaderStorage.home_dir(self.reader_settings, self.device, self.cwd) .. "/libby-adobe-authorization.json"
+    return KOReaderStorage.home_dir(self.reader_settings, self.device, self.cwd) .. "/libby-dashboard-adobe-bytebooks-auth.json"
 end
 
 function KOReaderController:export_adobe_registration()

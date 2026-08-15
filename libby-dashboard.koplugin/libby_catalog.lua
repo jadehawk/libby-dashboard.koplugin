@@ -454,9 +454,9 @@ function LibbyCatalog:heroWidget(width, height)
         bordersize = Size.border.thin, background = Blitbuffer.COLOR_WHITE,
         HorizontalGroup:new{
             align = "center",
-            coverWidget(loan, cover_w, cover_h, path, true),
-            HorizontalSpan:new{ width = 2 * pad },
             info,
+            HorizontalSpan:new{ width = 2 * pad },
+            coverWidget(loan, cover_w, cover_h, path, true),
         },
     }
 end

@@ -1,14 +1,12 @@
-.codegraph/
-.ai-bridge/
-.thinkforge*
-.libby-cli/
-acsm_downloads/
-adobe-registration.json
-__pycache__/
-*.py[cod]
-.pytest_cache/
-dist/
-TEMP-WHILE-INITIAL-DESIGN/
-Working Before UI Change.zip
-LIBBY_CURRENT_PROTOCOL_HANDOFF.md
-crash.log
+# This repository publishes only the installable KOReader plugin, its release
+# workflow, and the public README. Everything else in this workspace is local
+# development/reference material and must not be pushed.
+/*
+
+!/.gitignore
+!/README.md
+!/libby-dashboard.koplugin/
+!/libby-dashboard.koplugin/**
+!/.github/
+!/.github/workflows/
+!/.github/workflows/release.yml
