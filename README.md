@@ -4,6 +4,16 @@ Libby Dashboard is a self-contained KOReader plugin for browsing and reading sup
 
 Current plugin version: **0.1.0**
 
+## Installation
+
+1. Download the latest `libby-dashboard.koplugin.zip` from GitHub Releases.
+2. Extract the ZIP.
+3. Copy the entire `libby-dashboard.koplugin` folder to KOReader's `plugins` folder.
+4. Restart KOReader.
+5. Open **Libby Dashboard** from KOReader's **Tools** menu and complete **Libby Setup** and **Adobe/ByteBooks Setup**.
+
+After the initial installation, future releases can be installed directly from **Libby Dashboard Settings → Check for Updates**.
+
 ## What it does
 
 - Authenticates with Libby using Libby's device setup-code flow.
