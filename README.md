@@ -14,6 +14,14 @@ Current plugin version: **0.1.0**
 
 After the initial installation, future releases can be installed directly from **Libby Dashboard Settings → Check for Updates**.
 
+## Tested devices
+
+Libby Dashboard has been successfully tested for Libby login, ByteBooks sign-in, and book downloads on:
+
+- Boox Go 7 Gen 2
+- Kindle Paperwhite Signature Edition (12th Gen)
+- Kobo Clara BW
+
 ## Screenshots
 
 <p align="center">

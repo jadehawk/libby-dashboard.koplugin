@@ -91,7 +91,7 @@ local function actionButton(text, width, height, available, callback)
     return item
 end
 
-local function iconTap(icon, width, height, callback, icon_size)
+local function iconTap(icon, width, height, callback, icon_size, tap_extend_left)
     local size = icon_size or math.floor(height * 0.62)
     local item = InputContainer:new{
         dimen = Geom:new{ w = width, h = height },
@@ -100,7 +100,8 @@ local function iconTap(icon, width, height, callback, icon_size)
             IconWidget:new{ icon = icon, width = size, height = size },
         },
     }
-    item.ges_events = { TapSelect = { GestureRange:new{ ges = "tap", range = item.dimen } } }
+    local tap_range = tap_extend_left and Geom:new{ x = -width, y = 0, w = width * 2, h = height } or item.dimen
+    item.ges_events = { TapSelect = { GestureRange:new{ ges = "tap", range = tap_range } } }
     item.onTapSelect = function()
         if callback then callback() end
         return true
@@ -127,7 +128,8 @@ local function hamburgerTap(width, height, callback)
         dimen = Geom:new{ w = width, h = height },
         CenterContainer:new{ dimen = Geom:new{ w = width, h = height }, BarsWidget:new{} },
     }
-    item.ges_events = { TapSelect = { GestureRange:new{ ges = "tap", range = item.dimen } } }
+    local tap_range = Geom:new{ x = 0, y = 0, w = width * 2, h = height }
+    item.ges_events = { TapSelect = { GestureRange:new{ ges = "tap", range = tap_range } } }
     item.onTapSelect = function()
         if callback then callback() end
         return true

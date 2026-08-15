@@ -32,7 +32,7 @@ local LibbyCatalog = require("libby_catalog")
 local LoanModel = require("loan_model")
 local PathTemplate = require("path_template")
 
-local PLUGIN_VERSION = "0.1.0"
+local PLUGIN_VERSION = "0.1.1"
 local DEV_OPTIONS_CODE_SHA256 = "5a9797edd88b30dbcd6df95d8605f487d43c15ccd11ebee1aafda677433d4c54"
 
 -- Load the vendored Adobe stack while PluginLoader still has this plugin's
@@ -507,7 +507,12 @@ end
 
 function LibbyDashboard:verifyLibbySetupCode()
     NetworkMgr:runWhenOnline(function()
+        local waiting_message = InfoMessage:new{ text = _("Awaiting Libby verification...") }
+        UIManager:show(waiting_message)
+        UIManager:forceRePaint()
         local state, err = self.controller:complete_libby_setup()
+        UIManager:close(waiting_message)
+        UIManager:forceRePaint()
         if not state then
             local pending = self.controller:pending_libby_setup()
             if pending and pending.remaining > 0 then
@@ -923,9 +928,13 @@ function LibbyDashboard:showByteBooksLogin()
                                 return
                             end
                             UIManager:close(dialog)
-                            UIManager:show(InfoMessage:new{ text = _("Signing in to ByteBooks..."), timeout = 1 })
+                            local signing_in_message = InfoMessage:new{ text = _("Signing in to ByteBooks...") }
+                            UIManager:show(signing_in_message)
+                            UIManager:forceRePaint()
                             local registered, err = self.controller:create_adobe_account_registration(email, password, named_method)
                             password = nil
+                            UIManager:close(signing_in_message)
+                            UIManager:forceRePaint()
                             UIManager:show(InfoMessage:new{
                                 text = registered
                                     and (_("ByteBooks authorization created successfully.")

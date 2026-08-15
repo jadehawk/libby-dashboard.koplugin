@@ -148,7 +148,7 @@ function fulfillment.operatorAuth(operatorURL, userUUID, userCert, licenseCert, 
     body = body .. "  <adept:authenticationCertificate>" .. authCert .. "</adept:authenticationCertificate>\n"
     body = body .. "</adept:credentials>"
 
-    logger.info("[ACSM] Operator auth:", authURL)
+    logger.info("[ACSM] Operator auth request")
     local resp, err = adeptPost(authURL, body)
     if not resp then
         return nil, "Operator auth failed: " .. tostring(err)
@@ -190,7 +190,7 @@ function fulfillment.initLicenseService(activationURL, operatorURL, userUUID, si
     body = body .. "</adept:licenseServiceRequest>"
 
     local initURL = activationURL:gsub("/+$", "") .. "/InitLicenseService"
-    logger.info("[ACSM] InitLicenseService:", initURL)
+    logger.info("[ACSM] InitLicenseService request")
     local resp, err = adeptPost(initURL, body)
     if not resp then
         return nil, "InitLicenseService failed: " .. tostring(err)
@@ -263,7 +263,7 @@ function fulfillment.fulfill(acsmPath, userUUID, deviceUUID, fingerprint, signin
     body = body:gsub("</adept:fulfill>$", "<adept:signature>" .. sig .. "</adept:signature></adept:fulfill>")
 
     local fulfillURL = operatorURL:gsub("/+$", "") .. "/Fulfill"
-    logger.info("[ACSM] Fulfill:", fulfillURL)
+    logger.info("[ACSM] Fulfill request")
 
     local resp, code = adeptPost(fulfillURL, body)
     if not resp or resp == "" then
@@ -370,7 +370,7 @@ function fulfillment.notify(notifyURL, userUUID, deviceUUID, signingKey)
     body = body .. "  <adept:signature>" .. sig .. "</adept:signature>\n"
     body = body .. "</adept:notification>"
 
-    logger.info("[ACSM] Notify:", notifyURL)
+    logger.info("[ACSM] Notify request")
     local response, err = adeptPost(notifyURL, body)
     if not response then
         return nil, err
@@ -414,7 +414,7 @@ function fulfillment.process(acsmPath, outputPath, creds, deviceUUID, fingerprin
     if not operatorURL then
         return nil, "No operatorURL in ACSM"
     end
-    logger.info("[ACSM] fulfillment.process: operatorURL=", operatorURL)
+    logger.info("[ACSM] fulfillment.process: operator URL available")
 
     logger.info("[ACSM] fulfillment.process: decoding pkcs12...")
     local pkcs12Key, pkcs12Err = crypto.decodepkcs12(creds.pkcs12, creds.deviceKey)
@@ -463,7 +463,7 @@ function fulfillment.process(acsmPath, outputPath, creds, deviceUUID, fingerprin
     if err then
         return nil, err
     end
-    logger.info("[ACSM] fulfillment.process: fulfillment OK, download URL=", result.src)
+    logger.info("[ACSM] fulfillment.process: fulfillment returned a download URL")
 
     -- Download the book (detect format from magic bytes)
     local tmpFile = uniqueCachePath("fulfillment", ".bin")

@@ -319,6 +319,7 @@ function LibbyClient:_recover_fulfillment_on_same_connection(path)
     self:_set_identity(identity)
     local href = type(retry.body) == "table" and retry.body.fulfill and retry.body.fulfill.href
     if type(href) ~= "string" or href == "" then return nil, "Libby fulfillment response did not contain fulfill.href" end
+    if not href:match("^https://") then return nil, "Libby returned a non-HTTPS fulfillment URL" end
     local acsm, download_err = self.transport:request({ method = "GET", base_url = href, path = "", headers = { ["User-Agent"] = self.user_agent, ["Accept"] = "*/*" } })
     if not acsm then return nil, download_err end
     if acsm.status ~= 200 then return nil, "ACSM download failed with HTTP " .. tostring(acsm.status) end

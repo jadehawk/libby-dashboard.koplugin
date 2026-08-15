@@ -14,6 +14,30 @@ local Updater = {}
 local REPO = "jadehawk/libby-dashboard.koplugin"
 local LATEST_URL = "https://api.github.com/repos/" .. REPO .. "/releases/latest"
 local ASSET_NAME = "libby-dashboard.koplugin.zip"
+local PLUGIN_DIR_NAME = "libby-dashboard.koplugin"
+local RELEASE_DOWNLOAD_PREFIX = "https://github.com/" .. REPO .. "/releases/download/"
+
+local function trustedReleaseUrl(value)
+    return type(value) == "string"
+        and value:sub(1, #RELEASE_DOWNLOAD_PREFIX) == RELEASE_DOWNLOAD_PREFIX
+        and not value:find("[%c%s]")
+end
+
+local function safeArchivePath(value)
+    if type(value) ~= "string" or value == "" or value:find("\0", 1, true) then return nil end
+    local normalized = value:gsub("\\", "/")
+    if normalized:sub(1, 1) == "/" or normalized:match("^%a:/") then return nil end
+    local parts = {}
+    for part in normalized:gmatch("[^/]+") do
+        if part == ".." then return nil end
+        if part ~= "." and part ~= "" then parts[#parts + 1] = part end
+    end
+    if #parts == 0 then return nil end
+    return table.concat(parts, "/")
+end
+
+Updater._trustedReleaseUrl = trustedReleaseUrl
+Updater._safeArchivePath = safeArchivePath
 
 local function parseVersion(value)
     if type(value) ~= "string" then return nil end
@@ -58,6 +82,9 @@ local function latestRelease()
     if not parseVersion(tag) then return nil, "Latest GitHub release has an invalid version tag" end
     for _, asset in ipairs(release.assets or {}) do
         if asset.name == ASSET_NAME and type(asset.browser_download_url) == "string" then
+            if not trustedReleaseUrl(asset.browser_download_url) then
+                return nil, "Latest release contains an unexpected download URL"
+            end
             return { version = tag:gsub("^v", ""), url = asset.browser_download_url }
         end
     end
@@ -78,25 +105,41 @@ local function childNames(dir)
     return names
 end
 
-local function stripRootInto(raw_dir, staging)
+local function prepareExtractedPlugin(raw_dir, staging)
+    local packaged = raw_dir .. "/" .. PLUGIN_DIR_NAME
+    if lfs.attributes(packaged .. "/main.lua", "mode") == "file"
+        and lfs.attributes(packaged .. "/_meta.lua", "mode") == "file" then
+        if not os.rename(packaged, staging) then return nil, "Could not prepare extracted update" end
+        os.execute("rm -rf " .. sq(raw_dir))
+        return true
+    end
+
+    if lfs.attributes(raw_dir .. "/main.lua", "mode") == "file"
+        and lfs.attributes(raw_dir .. "/_meta.lua", "mode") == "file" then
+        if not os.rename(raw_dir, staging) then return nil, "Could not prepare extracted update" end
+        return true
+    end
+
     local names = childNames(raw_dir)
     local root = names[1]
-    if #names == 1 and root and lfs.attributes(raw_dir .. "/" .. root, "mode") == "directory" then
+    if #names == 1 and root and lfs.attributes(raw_dir .. "/" .. root, "mode") == "directory"
+        and lfs.attributes(raw_dir .. "/" .. root .. "/main.lua", "mode") == "file"
+        and lfs.attributes(raw_dir .. "/" .. root .. "/_meta.lua", "mode") == "file" then
         if not os.rename(raw_dir .. "/" .. root, staging) then return nil, "Could not prepare extracted update" end
         os.execute("rm -rf " .. sq(raw_dir))
         return true
     end
-    if not os.rename(raw_dir, staging) then return nil, "Could not prepare extracted update" end
-    return true
+    return nil, "Update archive does not contain a valid Libby Dashboard plugin"
 end
 
 local function unpack(zip_path, staging, raw_dir)
+    os.execute("rm -rf " .. sq(raw_dir))
+    if not lfs.mkdir(raw_dir) and lfs.attributes(raw_dir, "mode") ~= "directory" then
+        return nil, "Could not create update staging directory"
+    end
+
     local has_archiver, Archiver = pcall(require, "ffi/archiver")
     if has_archiver and type(Archiver) == "table" and Archiver.Reader then
-        os.execute("rm -rf " .. sq(raw_dir))
-        if not lfs.mkdir(raw_dir) and lfs.attributes(raw_dir, "mode") ~= "directory" then
-            return nil, "Could not create update staging directory"
-        end
         local arc = Archiver.Reader:new()
         if not arc:open(zip_path) then
             local err = arc.err
@@ -104,20 +147,29 @@ local function unpack(zip_path, staging, raw_dir)
             return nil, tostring(err or "Could not open update archive")
         end
         for entry in arc:iterate() do
-            if not arc:extractToPath(entry.path, raw_dir .. "/" .. entry.path) then break end
+            if entry.mode ~= "file" and entry.mode ~= "directory" then
+                arc:close()
+                os.execute("rm -rf " .. sq(raw_dir))
+                return nil, "Update archive contains an unsupported entry type"
+            end
+            local normalized = safeArchivePath(entry.path)
+            if not normalized then
+                arc:close()
+                os.execute("rm -rf " .. sq(raw_dir))
+                return nil, "Update archive contains an unsafe path"
+            end
+            if not arc:extractToPath(entry.path, raw_dir .. "/" .. normalized) then break end
         end
         local err = arc.err
         arc:close()
         if err then return nil, tostring(err) end
-        return stripRootInto(raw_dir, staging)
+        return prepareExtractedPlugin(raw_dir, staging)
     end
+
     if type(Device.unpackArchive) ~= "function" then return nil, "This KOReader build cannot extract update archives" end
-    if not lfs.mkdir(staging) and lfs.attributes(staging, "mode") ~= "directory" then
-        return nil, "Could not create update staging directory"
-    end
-    local ok, err = Device:unpackArchive(zip_path, staging, true)
+    local ok, err = Device:unpackArchive(zip_path, raw_dir, true)
     if not ok then return nil, tostring(err or "Archive extraction failed") end
-    return true
+    return prepareExtractedPlugin(raw_dir, staging)
 end
 
 local function apply(plugin_dir, release)
@@ -152,14 +204,18 @@ local function apply(plugin_dir, release)
 end
 
 function Updater.check(plugin, interactive)
-    local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
-    local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
+    local wifi_on = type(NetworkMgr.isWifiOn) == "function" and NetworkMgr:isWifiOn()
+    local connected = type(NetworkMgr.isConnected) == "function" and NetworkMgr:isConnected()
     if not (wifi_on and connected) then
-        if interactive then UIManager:show(InfoMessage:new{ text = _("Wi-Fi is required to check for updates.") }) end
+        if interactive then UIManager:show(InfoMessage:new{ text = _("Wi-Fi must be on and connected to check for updates.") }) end
         return
     end
-    UIManager:show(InfoMessage:new{ text = _("Checking for Libby Dashboard updates..."), timeout = 2 })
+    local checking_message = InfoMessage:new{ text = _("Checking for Libby Dashboard updates...") }
+    UIManager:show(checking_message)
+    UIManager:forceRePaint()
     local release, err = latestRelease()
+    UIManager:close(checking_message)
+    UIManager:forceRePaint()
     if not release then
         UIManager:show(InfoMessage:new{ text = _("Could not check for updates:") .. "\n\n" .. tostring(err), timeout = 6 })
         return
@@ -172,7 +228,12 @@ function Updater.check(plugin, interactive)
         text = _("Libby Dashboard v") .. release.version .. _(" is available.\n\nInstalled: v") .. plugin.PLUGIN_VERSION .. _("\n\nDownload and install the update?"),
         ok_text = _("Update"),
         ok_callback = function()
+            local updating_message = InfoMessage:new{ text = _("Downloading and installing Libby Dashboard update...") }
+            UIManager:show(updating_message)
+            UIManager:forceRePaint()
             local ok, apply_err = apply(plugin.path, release)
+            UIManager:close(updating_message)
+            UIManager:forceRePaint()
             if not ok then
                 UIManager:show(InfoMessage:new{ text = _("Update failed:") .. "\n\n" .. tostring(apply_err), timeout = 6 })
                 return

@@ -46,7 +46,7 @@ local function requestToString(request)
     request.headers = request.headers or {}
     request.headers["User-Agent"] = request.headers["User-Agent"] or socketutil.USER_AGENT
 
-    logger.info("[ACSM] HTTP request:", request.method or "GET", request.url)
+    logger.info("[ACSM] HTTP request:", request.method or "GET")
     socketutil:set_timeout(socketutil.FILE_BLOCK_TIMEOUT, socketutil.FILE_TOTAL_TIMEOUT)
     local ok, code = pcall(function()
         return socket.skip(1, http.request(request))
@@ -345,7 +345,7 @@ function adobe.activate(user, deviceKey, pkcs12)
     if not nonce then
         return nil, nonceErr
     end
-    logger.info("[ACSM] activate: building activation request, fingerprint=", fingerprint)
+    logger.info("[ACSM] activate: building activation request")
 
     local activationRequest, buildErr = xml.adobeSigned("activate", pkcs12Key, {
         _attr = { requestType = "initial" },
@@ -381,7 +381,7 @@ function adobe.activate(user, deviceKey, pkcs12)
     if type(resp.activationToken) ~= "table" or not resp.activationToken.device then
         return nil, "Server returned unexpected activation response"
     end
-    logger.info("[ACSM] activate: success, device=", resp.activationToken.device)
+    logger.info("[ACSM] activate: success")
     return resp.activationToken.device, fingerprint
 end
 return adobe
