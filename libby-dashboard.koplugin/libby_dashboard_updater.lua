@@ -42,7 +42,6 @@ local function request(url, sink)
             ["X-GitHub-Api-Version"] = "2022-11-28",
         },
         sink = sink,
-        redirect = true,
     }
     if not ok then return nil, tostring(code or status or "HTTPS request failed") end
     if tonumber(code) ~= 200 then return nil, "GitHub returned HTTP " .. tostring(code) end

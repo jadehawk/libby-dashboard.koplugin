@@ -1136,7 +1136,13 @@ This project stands on ideas, research, and selected implementation patterns fro
 
 Many thanks to their authors and contributors for making their work available to the community.
 
-Libby Dashboard for KOReader is an independent community project and is not affiliated with Libby, OverDrive, Adobe, or the projects credited above.
+## Links & Support
+
+- [Techy Notes](https://techy-notes.com) — blog, projects, notes, and guides.
+- [Jadehawk on YouTube](https://youtube.com/@jadehawk) — some projects tutorials.
+- [Buy Me a Coffee](https://buymeacoffee.com/jadehawk) — if you would like to support my projects.
+
+Libby Dashboard for KOReader is an independent personal project and is not affiliated with Libby, OverDrive, Adobe, Bytebooks or the projects credited above.
 ]]
     local viewer
     viewer = TextViewer:new{
@@ -1198,6 +1204,7 @@ function LibbyDashboard:showSettings()
     table.insert(buttons, { { text = _("Close"), callback = function() UIManager:close(dialog) end } })
     dialog = ButtonDialog:new{
         title = _("Libby Dashboard") .. " (v" .. PLUGIN_VERSION .. ")",
+        title_align = "center",
         buttons = buttons,
     }
     UIManager:show(dialog)

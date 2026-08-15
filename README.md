@@ -47,8 +47,6 @@ HOME/Libby Books/<author:first>/<series>/<title>.<ext>
 <author:first> Refers to the First Author incase of Multi-Author book.
 ```
 
-The path can be customized in the plugin using the available metadata tokens.
-
 ## Development
 
 The repository contains the installable KOReader plugin in `libby-dashboard.koplugin/` together with Lua protocol/core code and tests used during development. The compatibility target is Lua 5.1 / LuaJIT as used by KOReader.
@@ -57,9 +55,15 @@ The implementation has also benefited from selected ideas and functions from the
 
 ## AI-assisted development disclaimer
 
-Libby Dashboard has been put together with substantial development assistance from OpenAI's ChatGPT. AI assistance has been used while designing, implementing, debugging, reviewing, and testing portions of the plugin.
+Libby Dashboard has been put together with assistance from OpenAI's ChatGPT. AI assistance has been used while designing, implementing, debugging, reviewing, and testing portions of the plugin.
 
 If you do not want to use software developed with AI assistance, please do not install Libby Dashboard. The source is available for review so you can make your own decision before running it on your device.
+
+## Links & Support
+
+- [Techy Notes](https://techy-notes.com) — blog, projects, notes, and guides.
+- [Jadehawk on YouTube](https://youtube.com/@jadehawk) — videos and project content.
+- [Buy Me a Coffee](https://buymeacoffee.com/jadehawk) — if you would like to support my projects.
 
 ## Project status
 
