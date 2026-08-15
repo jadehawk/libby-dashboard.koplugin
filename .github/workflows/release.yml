@@ -73,8 +73,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          zip -qr libby-dashboard.koplugin.zip libby-dashboard.koplugin
-          test "$(unzip -Z1 libby-dashboard.koplugin.zip | head -n1)" = "libby-dashboard.koplugin/"
+          zip -qr libby-dashboard.koplugin.zip README.md libby-dashboard.koplugin
+          unzip -Z1 libby-dashboard.koplugin.zip | grep -Fxq "README.md"
+          unzip -Z1 libby-dashboard.koplugin.zip | grep -Fxq "libby-dashboard.koplugin/main.lua"
 
       - name: Create GitHub release
         env:
