@@ -491,7 +491,8 @@ function KOReaderController:adobe_summary()
     return AdobeProfile.summary(self.settings.adobe_registration)
 end
 
-function KOReaderController:fulfill_acsm(acsm_path, output_path)
+function KOReaderController:fulfill_acsm(acsm_path, output_path, options)
+    options = options or { protected_epub = true }
     local profile, profile_err = AdobeProfile.normalize(self.settings.adobe_registration)
     if not profile then return nil, profile_err end
 
@@ -506,7 +507,8 @@ function KOReaderController:fulfill_acsm(acsm_path, output_path)
         restored.creds,
         restored.deviceUUID,
         restored.fingerprint,
-        restored.authCert
+        restored.authCert,
+        options
     )
 end
 

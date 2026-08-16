@@ -6,6 +6,7 @@ local lfs = require("libs/libkoreader-lfs")
 local ltn12 = require("ltn12")
 local logger = require("logger")
 local socket = require("socket")
+local socketurl = require("socket.url")
 local socketutil = require("socketutil")
 local koutil = require("util")
 
@@ -72,6 +73,32 @@ local function adeptPost(endpoint, body)
         },
         source = ltn12.source.string(body),
     })
+end
+
+function fulfillment.fetchLicenseServiceCertificate(operatorURL, licenseURL)
+    if not operatorURL or not licenseURL then
+        return nil, "License service URL information is missing"
+    end
+    local endpoint = operatorURL:gsub("/+$", "") .. "/LicenseServiceInfo?licenseURL=" .. socketurl.escape(licenseURL)
+    local response, code = requestToString({ url = endpoint, method = "GET" })
+    if not response or tonumber(code) and (tonumber(code) < 200 or tonumber(code) >= 300) then
+        return nil, "LicenseServiceInfo request failed: " .. tostring(code)
+    end
+
+    local parseOk, root = pcall(dom.parse, response)
+    if not parseOk then
+        return nil, "LicenseServiceInfo returned malformed XML: " .. tostring(root)
+    end
+    local nsMap = { adept = ADEPT, [""] = ADEPT }
+    local certNode = dom.findDescendant(root, nsMap, "certificate", ADEPT)
+    if not certNode then
+        certNode = dom.findDescendant(root, nsMap, "certificate", nil)
+    end
+    local certificate = certNode and dom.textOf(certNode) or nil
+    if not certificate or certificate == "" then
+        return nil, "LicenseServiceInfo response did not contain a certificate"
+    end
+    return certificate
 end
 
 local function deserializeXml(body, context)
@@ -350,6 +377,75 @@ function fulfillment.decryptBookKey(encryptedKeyB64, licenseKey)
     return decrypted
 end
 
+local function writeFile(path, contents)
+    local file, err = io.open(path, "wb")
+    if not file then
+        return nil, err
+    end
+    local ok, writeErr = file:write(contents)
+    file:close()
+    if not ok then
+        return nil, writeErr
+    end
+    return true
+end
+
+local function protectedRightsXml(result)
+    if not result or not result.licenseTokenXml then
+        return nil, "Fulfillment response did not contain a license token"
+    end
+    if not result.licenseURL or result.licenseURL == "" then
+        return nil, "License service URL is missing"
+    end
+    if not result.licenseServiceCertificate then
+        return nil, "License service certificate is missing"
+    end
+
+    local newline = string.char(10)
+    local parts = {
+        '<?xml version="1.0"?>', newline,
+        '<adept:rights xmlns:adept="' .. ADEPT .. '">', newline,
+        result.licenseTokenXml, newline,
+    }
+    parts[#parts + 1] = '<adept:licenseServiceInfo><adept:licenseURL>'
+    parts[#parts + 1] = dom.xmlEscape(result.licenseURL)
+    parts[#parts + 1] = '</adept:licenseURL><adept:certificate>'
+    parts[#parts + 1] = dom.xmlEscape(result.licenseServiceCertificate)
+    parts[#parts + 1] = '</adept:certificate></adept:licenseServiceInfo>'
+    parts[#parts + 1] = newline
+    parts[#parts + 1] = '</adept:rights>'
+    return table.concat(parts)
+end
+
+function fulfillment.saveProtectedEpub(inputPath, outputPath, result)
+    local rightsXml, rightsErr = protectedRightsXml(result)
+    if not rightsXml then
+        return nil, rightsErr
+    end
+
+    local rightsPath = outputPath .. ".rights"
+    local rightsOk, writeErr = writeFile(rightsPath, rightsXml)
+    if not rightsOk then
+        return nil, "Failed to write ADEPT rights sidecar: " .. tostring(writeErr)
+    end
+
+    local moved, moveErr = os.rename(inputPath, outputPath)
+    if not moved then
+        local copied, copyErr = koutil.copyFile(inputPath, outputPath)
+        if not copied then
+            os.remove(rightsPath)
+            return nil, "Failed to preserve encrypted EPUB: " .. tostring(copyErr or moveErr)
+        end
+        os.remove(inputPath)
+    end
+
+    return {
+        protected = true,
+        rightsPath = rightsPath,
+        response = result.response,
+    }
+end
+
 function fulfillment.notify(notifyURL, userUUID, deviceUUID, signingKey)
     local nonce, nonceErr = crypto.nonce()
     if not nonce then
@@ -378,7 +474,8 @@ function fulfillment.notify(notifyURL, userUUID, deviceUUID, signingKey)
     return true
 end
 
-function fulfillment.process(acsmPath, outputPath, creds, deviceUUID, fingerprint, authCert)
+function fulfillment.process(acsmPath, outputPath, creds, deviceUUID, fingerprint, authCert, options)
+    options = options or {}
     outputPath = outputPath or acsmPath:gsub("%.acsm$", ".epub")
     logger.info("[ACSM] fulfillment.process: acsmPath=", acsmPath, "outputPath=", outputPath)
 
@@ -487,8 +584,9 @@ function fulfillment.process(acsmPath, outputPath, creds, deviceUUID, fingerprin
 
     logger.info("[ACSM] fulfillment.process: format detected: ", isPdf and "PDF" or (isEpub and "EPUB" or "unknown"))
 
-    local decryptedInfo, decryptErr
-    local bookKey -- may be nil for PDF (extracted internally)
+    local preparedInfo, prepareErr
+    local bookKey -- may be nil for PDF or protected EPUB
+    local protectedMode = options.protected_epub == true and isEpub
     if isPdf then
         logger.info("[ACSM] fulfillment.process: decrypting PDF...")
         local pdf = require("adobe.pdf")
@@ -496,7 +594,20 @@ function fulfillment.process(acsmPath, outputPath, creds, deviceUUID, fingerprin
         -- ADEPT_LICENSE, handling hardening removal automatically.
         -- Pass fulfillment encrypted key as fallback for older ADEPT schemes
         -- that don't embed ADEPT_LICENSE in the PDF.
-        decryptedInfo, decryptErr = pdf.decryptAdobePdf(tmpFile, outputPath, nil, creds.licenseKey, result.encryptedKey)
+        preparedInfo, prepareErr = pdf.decryptAdobePdf(tmpFile, outputPath, nil, creds.licenseKey, result.encryptedKey)
+    elseif protectedMode then
+        logger.info("[ACSM] fulfillment.process: fetching license service certificate...")
+        local licenseCertificate, certErr = fulfillment.fetchLicenseServiceCertificate(result.operatorURL, result.licenseURL)
+        if not licenseCertificate then
+            os.remove(tmpFile)
+            return nil, certErr
+        end
+        result.licenseServiceCertificate = licenseCertificate
+        logger.info("[ACSM] fulfillment.process: preserving encrypted EPUB with ADEPT rights sidecar...")
+        preparedInfo, prepareErr = fulfillment.saveProtectedEpub(tmpFile, outputPath, result)
+        if preparedInfo then
+            tmpFile = nil -- saveProtectedEpub moved or copied the encrypted payload into place
+        end
     else
         logger.info("[ACSM] fulfillment.process: decrypting book key...")
         local bookKeyErr
@@ -508,16 +619,17 @@ function fulfillment.process(acsmPath, outputPath, creds, deviceUUID, fingerprin
         logger.info("[ACSM] fulfillment.process: book key decrypted")
 
         logger.info("[ACSM] fulfillment.process: decrypting EPUB...")
-        decryptedInfo, decryptErr = epub.decryptAdobeEpub(tmpFile, outputPath, bookKey)
+        preparedInfo, prepareErr = epub.decryptAdobeEpub(tmpFile, outputPath, bookKey)
     end
 
-    os.remove(tmpFile)
-    if not decryptedInfo then
-        local formatLabel = isPdf and "PDF" or "EPUB"
-        return nil, "Failed to decrypt " .. formatLabel .. ": " .. decryptErr
+    if tmpFile then
+        os.remove(tmpFile)
     end
-    logger.info("[ACSM] fulfillment.process: book decrypted to", outputPath)
-
+    if not preparedInfo then
+        local action = protectedMode and "preserve protected EPUB" or (isPdf and "decrypt PDF" or "decrypt EPUB")
+        return nil, "Failed to " .. action .. ": " .. tostring(prepareErr)
+    end
+    logger.info("[ACSM] fulfillment.process: book prepared at", outputPath)
     if result.notifyURLs and #result.notifyURLs > 0 then
         for _, notifyURL in ipairs(result.notifyURLs) do
             fulfillment.notify(notifyURL, userUUID, deviceUUID, pkcs12Key)
@@ -527,13 +639,16 @@ function fulfillment.process(acsmPath, outputPath, creds, deviceUUID, fingerprin
     return {
         outputPath = outputPath,
         bookKey = bookKey,
-        decryptedEntries = decryptedInfo.decryptedEntries or decryptedInfo.decryptedObjects,
-        remainingEncryptionXml = decryptedInfo.remainingEncryptionXml,
+        protected = preparedInfo.protected == true,
+        rightsPath = preparedInfo.rightsPath,
+        decryptedEntries = preparedInfo.decryptedEntries or preparedInfo.decryptedObjects,
+        remainingEncryptionXml = preparedInfo.remainingEncryptionXml,
         response = result.response,
     }
 end
 
 -- Export internal functions for testing (underscore-prefixed = internal API)
+fulfillment._protectedRightsXml = protectedRightsXml
 fulfillment._collectNotifyUrls = collectNotifyUrls
 fulfillment._signXmlBody = signXmlBody
 

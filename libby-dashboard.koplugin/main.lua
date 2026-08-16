@@ -70,6 +70,11 @@ function LibbyDashboard:init()
         device = Device,
     }
     self.controller:load()
+    local CreDocument = require("document/credocument")
+    local ProtectedEpub = require("protected_epub")
+    CreDocument.protected_document_resolver = function(path)
+        return ProtectedEpub.resolve(path, self.controller.settings)
+    end
     self:registerAcsmProvider()
     self.ui.menu:registerToMainMenu(self)
 end
