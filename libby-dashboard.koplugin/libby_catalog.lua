@@ -374,17 +374,19 @@ function LibbyCatalog:heroWidget(width, height)
     end
 
     local pad = Size.padding.default
+    local text_inset = Screen:scaleBySize(10)
     local cover_h = math.max(Screen:scaleBySize(90), height - 2 * pad)
     local cover_w = math.floor(cover_h * 0.66)
     local path = self.cover_path_callback and self.cover_path_callback(loan) or nil
-    local text_w = math.max(1, width - cover_w - 4 * pad)
+    local text_w = math.max(1, width - cover_w - 4 * pad - text_inset)
     local info_top = VerticalGroup:new{ align = "left" }
     table.insert(info_top, TextBoxWidget:new{
         text = safeText(loan.title or _("Untitled"), 120), width = text_w,
+        height = Screen:scaleBySize(30),
         bold = true, face = Font:getFace("cfont", 22), height_overflow_show_ellipsis = true,
     })
 
-    local metadata_face = Font:getFace("smallinfofont", 14)
+    local metadata_face = Font:getFace("smallinfofont", 17)
     local metadata_rows = {
         _("Author: ") .. safeText(loan.author or _("N/A"), 80),
         _("Series: ") .. safeText(loan.series or _("N/A"), 80),
@@ -456,6 +458,7 @@ function LibbyCatalog:heroWidget(width, height)
         bordersize = Size.border.thin, background = Blitbuffer.COLOR_WHITE,
         HorizontalGroup:new{
             align = "center",
+            HorizontalSpan:new{ width = text_inset },
             info,
             HorizontalSpan:new{ width = 2 * pad },
             coverWidget(loan, cover_w, cover_h, path, true),
@@ -503,6 +506,16 @@ function LibbyCatalog:tabsWidget(width, height)
         table.insert(tabs, { id = id, name = cardName(card), count = count })
     end
 
+    local label_h = Screen:scaleBySize(24)
+    local tabs_h = math.max(1, height - label_h)
+    local label = FrameContainer:new{
+        width = width, height = label_h, margin = 0, padding = 0,
+        bordersize = Size.border.thin, background = Blitbuffer.COLOR_WHITE, radius = 0,
+        CenterContainer:new{
+            dimen = Geom:new{ w = width, h = label_h },
+            TextWidget:new{ text = _("Libraries"), face = Font:getFace("cfont", 17), bold = true },
+        },
+    }
     local row = HorizontalGroup:new{ align = "center" }
     local count = math.max(1, #tabs)
     local tab_w = math.floor((width - 2 * Size.border.thin) / count)
@@ -511,15 +524,16 @@ function LibbyCatalog:tabsWidget(width, height)
         table.insert(row, tappableFrame(
             safeText(tab.name, 13) .. " (" .. tostring(tab.count) .. ")",
             tab_w,
-            height,
+            tabs_h,
             selected,
             function() self:selectCard(tab.id) end,
             17
         ))
     end
-    return CenterContainer:new{
-        dimen = Geom:new{ w = width, h = height },
-        row,
+    return VerticalGroup:new{
+        align = "center",
+        label,
+        CenterContainer:new{ dimen = Geom:new{ w = width, h = tabs_h }, row },
     }
 end
 
@@ -627,8 +641,8 @@ function LibbyCatalog:updateItems()
     end
 
     local header_height = Screen:scaleBySize(40)
-    local top_height = math.floor(self.height * 0.27)
-    local tabs_height = Screen:scaleBySize(30)
+    local top_height = math.floor(self.height * 0.30)
+    local tabs_height = Screen:scaleBySize(56)
     local footer_height = Screen:scaleBySize(32)
         + 2 * Screen:scaleBySize(4)
         + Screen:scaleBySize(12)

@@ -11,9 +11,12 @@ local DocumentRegistry = require("document/documentregistry")
 local DocSettings = require("docsettings")
 local LuaSettings = require("luasettings")
 local ButtonDialog = require("ui/widget/buttondialog")
+local CenterContainer = require("ui/widget/container/centercontainer")
 local ConfirmBox = require("ui/widget/confirmbox")
+local Geom = require("ui/geometry")
 local InfoMessage = require("ui/widget/infomessage")
 local MultiInputDialog = require("ui/widget/multiinputdialog")
+local TopContainer = require("ui/widget/container/topcontainer")
 local TextViewer = require("ui/widget/textviewer")
 local NetworkMgr = require("ui/network/manager")
 local Trapper = require("ui/trapper")
@@ -35,6 +38,35 @@ local PathTemplate = require("path_template")
 local PluginMeta = dofile(plugin_root .. "/_meta.lua")
 local PLUGIN_VERSION = assert(PluginMeta.version, "Missing plugin version in _meta.lua")
 local DEV_OPTIONS_CODE_SHA256 = "5a9797edd88b30dbcd6df95d8605f487d43c15ccd11ebee1aafda677433d4c54"
+
+local TopAlignedMultiInputDialog = MultiInputDialog:extend{}
+function TopAlignedMultiInputDialog:init(reinit)
+    MultiInputDialog.init(self, reinit)
+    local keyboard_height = self.keyboard_visible and self._input_widget:getKeyboardDimen().h or 0
+    local available = Geom:new{ w = self.screen_width, h = self.screen_height - keyboard_height }
+    local dialog_h = self.dialog_frame:getSize().h
+    self[1] = TopContainer:new{
+        dimen = available,
+        CenterContainer:new{
+            dimen = Geom:new{ w = available.w, h = dialog_h },
+            self.dialog_frame,
+        },
+    }
+end
+
+local TopAlignedButtonDialog = ButtonDialog:extend{}
+function TopAlignedButtonDialog:init()
+    ButtonDialog.init(self)
+    local screen = Device.screen:getSize()
+    local dialog_h = self.movable:getSize().h
+    self[1] = TopContainer:new{
+        dimen = screen,
+        CenterContainer:new{
+            dimen = Geom:new{ w = screen.w, h = dialog_h },
+            self.movable,
+        },
+    }
+end
 
 -- Load the vendored Adobe stack while PluginLoader still has this plugin's
 -- temporary package.path active. KOReader restores package.path after main.lua
@@ -939,15 +971,15 @@ function LibbyDashboard:showAccountBackupSettings()
                 .. _("Enter the password used when this encrypted backup was created.")
             fields = { { hint = _("Backup password"), text_type = "password" } }
         else
-            description = _("Give this backup a recognizable name (maximum 48 characters). The filename uses a shorter 24-character version of this name.") .. NL .. NL
-                .. _("This encrypted backup contains your Libby authentication and ByteBooks/Adobe authorization. Use at least 8 password characters and keep the password safe; it cannot be recovered.")
+            description = _("Name: max 48 characters; filename uses the first 24.") .. NL
+                .. _("Password: at least 8 characters and cannot be recovered.")
             fields = {
                 { hint = _("Backup name (max 48 characters)") },
                 { hint = _("Backup password"), text_type = "password" },
                 { hint = _("Confirm password"), text_type = "password" },
             }
         end
-        password_dialog = MultiInputDialog:new{
+        password_dialog = TopAlignedMultiInputDialog:new{
             title = importing and _("Restore Account Backup") or _("Create Account Backup"),
             description = description,
             fields = fields,
@@ -1035,7 +1067,7 @@ function LibbyDashboard:showAccountBackupSettings()
             end } })
         end
         table.insert(buttons, { { text = _("Cancel"), callback = function() UIManager:close(chooser_dialog) end } })
-        chooser_dialog = ButtonDialog:new{ title = _("Choose Account Backup"), buttons = buttons }
+        chooser_dialog = TopAlignedButtonDialog:new{ title = _("Choose Account Backup"), buttons = buttons }
         UIManager:show(chooser_dialog)
     end
 
