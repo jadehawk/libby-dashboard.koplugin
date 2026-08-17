@@ -423,7 +423,7 @@ function fulfillment.saveProtectedEpub(inputPath, outputPath, result)
         return nil, rightsErr
     end
 
-    local rightsPath = outputPath .. ".rights"
+    local rightsPath = outputPath .. ".lic"
     local rightsOk, writeErr = writeFile(rightsPath, rightsXml)
     if not rightsOk then
         return nil, "Failed to write ADEPT rights sidecar: " .. tostring(writeErr)

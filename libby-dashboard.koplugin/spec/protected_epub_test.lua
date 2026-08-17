@@ -7,7 +7,7 @@ end
 package.preload["util"] = function()
     return {
         pathExists = function(path)
-            return path == "/books/protected.epub.rights"
+            return path == "/books/protected.epub.lic" or path == "/books/legacy.epub.rights"
         end,
         getFilesystemType = function(path)
             if path == "/dev/shm" then return "tmpfs" end
@@ -35,6 +35,7 @@ end
 local ProtectedEpub = require("protected_epub")
 
 assert(ProtectedEpub.isProtected("/books/protected.epub") == true)
+assert(ProtectedEpub.isProtected("/books/legacy.epub") == true)
 assert(ProtectedEpub.isProtected("/books/plain.epub") == false)
 assert(ProtectedEpub.isProtected("/books/protected.pdf") == false)
 

@@ -49,13 +49,21 @@ local LibbyDashboard = WidgetContainer:extend{
 
 LibbyDashboard.PLUGIN_VERSION = PLUGIN_VERSION
 
+local function truncateUtf8Bytes(text, max_bytes)
+    if #text <= max_bytes then return text end
+    local cut = math.max(0, max_bytes)
+    while cut > 0 and text:byte(cut + 1) and text:byte(cut + 1) >= 128 and text:byte(cut + 1) < 192 do
+        cut = cut - 1
+    end
+    return text:sub(1, cut)
+end
+
 local function safeDisplayText(value, max_bytes)
     local text = tostring(value or "")
-    text = text:gsub("[%z\1-\31\127]", " "):gsub("%s+", " ")
-    text = util.fixUtf8(text, "?")
+    text = text:gsub("[%z-W]", " "):gsub("%s+", " ")
     max_bytes = max_bytes or 96
     if #text > max_bytes then
-        text = util.fixUtf8(text:sub(1, math.max(1, max_bytes - 3)), "?") .. "..."
+        text = truncateUtf8Bytes(text, math.max(1, max_bytes - 3)) .. "..."
     end
     return text
 end
@@ -159,7 +167,7 @@ function LibbyDashboard:externalAcsmOutputPath(file, model, extension)
     end
 
     local function available(path)
-        return not koUtil.pathExists(path) and not koUtil.pathExists(path .. ".rights")
+        return not koUtil.pathExists(path) and not koUtil.pathExists(path .. ".lic") and not koUtil.pathExists(path .. ".rights")
     end
     if available(desired) then return desired end
 
@@ -603,7 +611,8 @@ function LibbyDashboard:verifyLibbySetupCode()
         UIManager:show(InfoMessage:new{
             text = _("Libby authentication complete.") .. "\n\n"
                 .. _("Library cards found: ") .. tostring(#(state.cards or {})) .. "\n"
-                .. _("Current loans found: ") .. tostring(#(state.loans or {})),
+                .. _("Current loans found: ") .. tostring(#(state.loans or {})) .. "\n\n"
+                .. _("Account Backup is recommended so this Libby authentication can be restored later."),
         })
         if self.catalog_browser and UIManager:isWidgetShown(self.catalog_browser) then
             self:refreshBrowserSnapshot(self.catalog_browser)
@@ -895,6 +904,152 @@ function LibbyDashboard:showBrowser()
     end
 end
 
+function LibbyDashboard:showAuthenticationSettings()
+    local dialog
+    dialog = ButtonDialog:new{
+        title = _("Authentication"),
+        buttons = {
+            { { text = _("Libby Account"), callback = function() UIManager:close(dialog); self:showLibbySettings() end } },
+            { { text = _("ByteBooks / Adobe Authorization"), callback = function() UIManager:close(dialog); self:showAdobeSettings() end } },
+            { { text = _("Account Backup & Restore"), callback = function() UIManager:close(dialog); self:showAccountBackupSettings() end } },
+            { { text = _("Back"), callback = function() UIManager:close(dialog); self:showSettings() end } },
+        },
+    }
+    UIManager:show(dialog)
+end
+
+function LibbyDashboard:showAccountBackupSettings()
+    local AccountBackup = require("account_backup")
+    local NL = string.char(10)
+    local dialog
+
+    local function backupDisplayText(backup)
+        local label = safeDisplayText(backup.label or _("Unlabeled Account Backup"), 72)
+        local created = backup.created_at and backup.created_at:gsub("T", " "):gsub("Z$", " UTC") or _("Encrypted v1 backup")
+        return label .. NL .. created .. " • " .. tostring(backup.location or "")
+    end
+
+    local function passwordDialog(importing, backup)
+        local password_dialog
+        local import_path = importing and backup and backup.path or nil
+        local description
+        local fields
+        if importing then
+            description = backupDisplayText(backup) .. NL .. NL .. tostring(import_path or "") .. NL .. NL
+                .. _("Enter the password used when this encrypted backup was created.")
+            fields = { { hint = _("Backup password"), text_type = "password" } }
+        else
+            description = _("Give this backup a recognizable name (maximum 48 characters). The filename uses a shorter 24-character version of this name.") .. NL .. NL
+                .. _("This encrypted backup contains your Libby authentication and ByteBooks/Adobe authorization. Use at least 8 password characters and keep the password safe; it cannot be recovered.")
+            fields = {
+                { hint = _("Backup name (max 48 characters)") },
+                { hint = _("Backup password"), text_type = "password" },
+                { hint = _("Confirm password"), text_type = "password" },
+            }
+        end
+        password_dialog = MultiInputDialog:new{
+            title = importing and _("Restore Account Backup") or _("Create Account Backup"),
+            description = description,
+            fields = fields,
+            buttons = { {
+                { text = _("Cancel"), id = "close", callback = function() UIManager:close(password_dialog) end },
+                { text = importing and _("Restore") or _("Export"), is_enter_default = true, callback = function()
+                    local values = password_dialog:getFields()
+                    local label
+                    local password
+                    if importing then
+                        password = values and values[1] or ""
+                    else
+                        label = values and values[1] or ""
+                        local normalized, label_err = AccountBackup.validate_label(label)
+                        if not normalized then
+                            UIManager:show(InfoMessage:new{ text = tostring(label_err) })
+                            return
+                        end
+                        label = normalized
+                        password = values and values[2] or ""
+                        if password ~= (values and values[3] or "") then
+                            UIManager:show(InfoMessage:new{ text = _("Backup passwords do not match.") })
+                            return
+                        end
+                        if #password < 8 then
+                            UIManager:show(InfoMessage:new{ text = _("Backup password must be at least 8 characters.") })
+                            return
+                        end
+                    end
+                    UIManager:close(password_dialog)
+                    if importing then
+                        local result, err = self.controller:import_account_backup(password, import_path)
+                        if result then
+                            local restored = {}
+                            if result.libby then table.insert(restored, _("Libby authentication")) end
+                            if result.adobe then table.insert(restored, _("ByteBooks/Adobe authorization")) end
+                            local text = _("Account backup restored successfully.") .. NL .. NL .. table.concat(restored, NL)
+                            if result.libby then
+                                local refreshed, refresh_err = self.controller:refresh_libby_snapshot()
+                                if refreshed then
+                                    text = text .. NL .. NL .. _("Libby library refreshed successfully.")
+                                    if self.catalog_browser and UIManager:isWidgetShown(self.catalog_browser) then
+                                        self.catalog_browser:refreshSnapshot(refreshed, "live")
+                                    end
+                                else
+                                    text = text .. NL .. NL .. _("Authentication was restored, but the Libby library refresh failed:") .. NL .. tostring(refresh_err)
+                                end
+                            end
+                            UIManager:show(InfoMessage:new{ text = text })
+                        else
+                            UIManager:show(InfoMessage:new{ text = _("Could not restore account backup:") .. NL .. NL .. tostring(err) })
+                        end
+                    else
+                        local path, metadata_or_err = self.controller:export_account_backup(label, password)
+                        local text = path and (_("Encrypted account backup created:") .. NL .. NL .. tostring(label) .. NL .. tostring(path) .. NL .. NL
+                            .. _("Keep both this file and its password safe. For reinstall or device-loss recovery, copy the backup somewhere outside this device."))
+                            or (_("Could not export account backup:") .. NL .. NL .. tostring(metadata_or_err))
+                        UIManager:show(InfoMessage:new{ text = text })
+                    end
+                    password = nil
+                end },
+            } },
+        }
+        UIManager:show(password_dialog)
+        password_dialog:onShowKeyboard()
+    end
+
+    local function chooseImportBackup()
+        local backups = self.controller:find_account_backups()
+        if #backups == 0 then
+            UIManager:show(InfoMessage:new{ text = _("No encrypted account backup was found in the standard backup locations.") })
+            return
+        end
+        if #backups == 1 then
+            passwordDialog(true, backups[1])
+            return
+        end
+        local chooser_dialog
+        local buttons = {}
+        for _, backup in ipairs(backups) do
+            local selected = backup
+            table.insert(buttons, { { text = backupDisplayText(selected), callback = function()
+                UIManager:close(chooser_dialog)
+                passwordDialog(true, selected)
+            end } })
+        end
+        table.insert(buttons, { { text = _("Cancel"), callback = function() UIManager:close(chooser_dialog) end } })
+        chooser_dialog = ButtonDialog:new{ title = _("Choose Account Backup"), buttons = buttons }
+        UIManager:show(chooser_dialog)
+    end
+
+    dialog = ButtonDialog:new{
+        title = _("Account Backup & Restore"),
+        buttons = {
+            { { text = _("Export encrypted backup"), callback = function() passwordDialog(false) end } },
+            { { text = _("Import account backup"), callback = function() chooseImportBackup() end } },
+            { { text = _("Back"), callback = function() UIManager:close(dialog); self:showAuthenticationSettings() end } },
+        },
+    }
+    UIManager:show(dialog)
+end
+
 function LibbyDashboard:showLibbySettings()
     local dialog
     local authenticated = self.controller:libby_authenticated()
@@ -924,7 +1079,7 @@ function LibbyDashboard:showLibbySettings()
                     end,
                 })
             end } },
-            { { text = _("Back"), callback = function() UIManager:close(dialog); self:showSettings() end } },
+            { { text = _("Back"), callback = function() UIManager:close(dialog); self:showAuthenticationSettings() end } },
         },
     }
     UIManager:show(dialog)
@@ -1000,7 +1155,8 @@ function LibbyDashboard:showByteBooksLogin()
                                 text = registered
                                     and (_("ByteBooks authorization created successfully.")
                                         .. "\n\n" .. _("Account:") .. " " .. tostring(registered.username or email)
-                                        .. "\n" .. _("ADEPT user:") .. " " .. tostring(registered.user or ""))
+                                        .. "\n" .. _("ADEPT user:") .. " " .. tostring(registered.user or "")
+                                        .. "\n\n" .. _("Create an Account Backup now so this authorization can be restored without registering another device."))
                                     or (_("ByteBooks sign-in failed:") .. "\n\n" .. tostring(err)),
                             })
                         end,
@@ -1026,7 +1182,7 @@ function LibbyDashboard:showAdobeSettings()
         end
     end
     dialog = ButtonDialog:new{
-        title = _("Adobe/ByteBooks Setup") .. "\n" .. status_text,
+        title = _("ByteBooks / Adobe Authorization") .. "\n" .. status_text,
         buttons = {
             { { text = _("Register device (anonymous)"), callback = function()
                 local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
@@ -1052,34 +1208,6 @@ function LibbyDashboard:showAdobeSettings()
                 UIManager:close(dialog)
                 self:showByteBooksLogin()
             end } },
-            { { text = _("Export authorization"), callback = function()
-                local path, err = self.controller:export_adobe_registration()
-                UIManager:show(InfoMessage:new{
-                    text = path and (_("Adobe authorization exported to:") .. "\n\n" .. path
-                        .. "\n\n" .. _("Treat this file as a private credential."))
-                        or (_("Could not export Adobe authorization:") .. "\n\n" .. tostring(err)),
-                })
-            end } },
-            { { text = _("Import authorization"), callback = function()
-                local path = self.controller:adobe_export_path()
-                UIManager:show(ConfirmBox:new{
-                    text = _("Import Adobe/ByteBooks Authorization from:") .. "\n\n" .. path
-                        .. "\n\n" .. _("This replaces the Adobe/ByteBooks authorization currently used by Libby Dashboard."),
-                    cancel_text = _("Cancel"),
-                    ok_text = _("Import"),
-                    ok_callback = function()
-                        local imported, err = self.controller:import_adobe_registration(path)
-                        UIManager:show(InfoMessage:new{
-                            text = imported and _("Adobe authorization imported successfully.")
-                                or (_("Could not import Adobe authorization:") .. "\n\n" .. tostring(err)),
-                        })
-                        if imported then
-                            UIManager:close(dialog)
-                            self:showAdobeSettings()
-                        end
-                    end,
-                })
-            end } },
             { { text = _("Reset"), callback = function()
                 UIManager:close(dialog)
                 UIManager:show(ConfirmBox:new{
@@ -1095,7 +1223,7 @@ function LibbyDashboard:showAdobeSettings()
                     end,
                 })
             end } },
-            { { text = _("Back"), callback = function() UIManager:close(dialog); self:showSettings() end } },
+            { { text = _("Back"), callback = function() UIManager:close(dialog); self:showAuthenticationSettings() end } },
         },
     }
     UIManager:show(dialog)
@@ -1260,8 +1388,7 @@ end
 function LibbyDashboard:showSettings()
     local dialog
     local buttons = {
-        { { text = _("Libby Setup"), callback = function() UIManager:close(dialog); self:showLibbySettings() end } },
-        { { text = _("Adobe/ByteBooks Setup"), callback = function() UIManager:close(dialog); self:showAdobeSettings() end } },
+        { { text = _("Authentication"), callback = function() UIManager:close(dialog); self:showAuthenticationSettings() end } },
         { { text = _("Shelf size"), callback = function() UIManager:close(dialog); self:showShelfLayoutSettings() end } },
     }
     if self.controller.settings.cleanup_mode == "dry_run" then
@@ -1283,8 +1410,7 @@ end
 
 function LibbyDashboard:addToMainMenu(menu_items)
     local settings_items = {
-        { text = _("Libby Setup"), callback = function() self:showLibbySetup() end },
-        { text = _("Adobe/ByteBooks Setup"), callback = function() self:showAdobeSettings() end },
+        { text = _("Authentication"), callback = function() self:showAuthenticationSettings() end },
         { text = _("Shelf size"), callback = function() self:showShelfLayoutSettings() end },
     }
     if self.controller.settings.cleanup_mode == "dry_run" then

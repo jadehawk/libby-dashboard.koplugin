@@ -109,8 +109,11 @@ end
 
 local function resolveBookKey(path, settings)
     if type(path) ~= "string" or not path:lower():match("%.epub$") then return nil end
-    local rightsPath = path .. ".rights"
-    if not koUtil.pathExists(rightsPath) then return nil end
+    local rightsPath = path .. ".lic"
+    if not koUtil.pathExists(rightsPath) then
+        rightsPath = path .. ".rights"
+        if not koUtil.pathExists(rightsPath) then return nil end
+    end
 
     local rights, readErr = readFile(rightsPath)
     if not rights then error("Could not read ADEPT rights: " .. tostring(readErr)) end
@@ -243,7 +246,7 @@ end
 function ProtectedEpub.isProtected(path)
     return type(path) == "string"
         and path:lower():match("%.epub$") ~= nil
-        and koUtil.pathExists(path .. ".rights")
+        and (koUtil.pathExists(path .. ".lic") or koUtil.pathExists(path .. ".rights"))
 end
 
 function ProtectedEpub.prepare(path, settings)

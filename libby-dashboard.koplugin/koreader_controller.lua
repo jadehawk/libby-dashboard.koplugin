@@ -453,37 +453,162 @@ function KOReaderController:ensure_adobe_registration()
     return created, "generated"
 end
 
-function KOReaderController:adobe_export_path()
-    return KOReaderStorage.home_dir(self.reader_settings, self.device, self.cwd) .. "/libby-dashboard-adobe-bytebooks-auth.json"
+local ACCOUNT_BACKUP_FILENAME = "libby-dashboard-account-backup.json"
+local ACCOUNT_BACKUP_PATTERN = "^libby%-dashboard%-account%-backup.*%.json$"
+
+function KOReaderController:account_backup_dir()
+    return DataStorage:getSettingsDir() .. "/libby-dashboard/backups"
 end
 
-function KOReaderController:export_adobe_registration()
-    local profile, err = AdobeProfile.normalize(self.settings.adobe_registration)
-    if not profile then return nil, err end
-    local path = self:adobe_export_path()
+function KOReaderController:account_backup_path()
+    return self:account_backup_dir() .. "/" .. ACCOUNT_BACKUP_FILENAME
+end
+
+function KOReaderController:configured_book_storage_root()
+    local home = KOReaderStorage.home_dir(self.reader_settings, self.device, self.cwd)
+    local template = self.settings.book_path_template or PathTemplate.DEFAULT_TEMPLATE
+    local with_home = template:gsub("{home}", home)
+    local prefix = with_home:match("^(.-){") or with_home
+    prefix = prefix:gsub("\\", "/"):gsub("/+", "/"):gsub("/+$", "")
+    if prefix == "" then return home end
+    if not with_home:find("{", 1, true) then
+        prefix = prefix:match("^(.*)/[^/]+$") or home
+    end
+    return prefix
+end
+
+function KOReaderController:account_backup_search_dirs()
+    local result, seen = {}, {}
+    local function add(path, location)
+        if type(path) ~= "string" or path == "" or seen[path] then return end
+        seen[path] = true
+        table.insert(result, { path = path, location = location })
+    end
+    local home = KOReaderStorage.home_dir(self.reader_settings, self.device, self.cwd)
+    add(self:account_backup_dir(), "Settings")
+    add(home, "Home")
+    add(self:configured_book_storage_root(), "Book storage")
+    return result
+end
+
+function KOReaderController:account_backup_search_paths()
+    local result = {}
+    for _, entry in ipairs(self:account_backup_search_dirs()) do
+        table.insert(result, entry.path .. "/" .. ACCOUNT_BACKUP_FILENAME)
+    end
+    return result
+end
+
+function KOReaderController:find_account_backups()
+    local AccountBackup = require("account_backup")
+    local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
+    if not ok_lfs or not lfs or type(lfs.dir) ~= "function" then return {} end
+    local found, seen_ids = {}, {}
+    for _, directory in ipairs(self:account_backup_search_dirs()) do
+        local ok_dir, iterator, dir_state = pcall(lfs.dir, directory.path)
+        if ok_dir and iterator then
+            for name in iterator, dir_state do
+                if name ~= "." and name ~= ".." and name:match(ACCOUNT_BACKUP_PATTERN) then
+                    local path = directory.path .. "/" .. name
+                    local file = io.open(path, "rb")
+                    if file then
+                        local contents = file:read("*a")
+                        file:close()
+                        local metadata = AccountBackup.inspect(contents)
+                        if metadata then
+                            local dedupe_key = metadata.backup_id and ("id:" .. metadata.backup_id) or ("path:" .. path)
+                            if not seen_ids[dedupe_key] then
+                                seen_ids[dedupe_key] = true
+                                table.insert(found, {
+                                    path = path,
+                                    filename = name,
+                                    label = metadata.label or "Unlabeled Account Backup",
+                                    created_at = metadata.created_at,
+                                    backup_id = metadata.backup_id,
+                                    version = metadata.version,
+                                    location = directory.location,
+                                })
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    table.sort(found, function(a, b)
+        local ad, bd = a.created_at or "", b.created_at or ""
+        if ad ~= bd then return ad > bd end
+        return a.path < b.path
+    end)
+    return found
+end
+
+function KOReaderController:export_account_backup(label, password)
+    local AccountBackup = require("account_backup")
+    local metadata, metadata_err = AccountBackup.create_metadata(label)
+    if not metadata then return nil, metadata_err end
+    local adobe_profile
+    if self.settings.adobe_registration then
+        local err
+        adobe_profile, err = AdobeProfile.normalize(self.settings.adobe_registration)
+        if not adobe_profile then return nil, err end
+    end
+    if not self.settings.libby_identity and not adobe_profile then return nil, "No authentication is available to back up" end
+    local payload = {
+        format = "libby-dashboard-account-data",
+        version = 1,
+        backup = {
+            label = metadata.label,
+            created_at = metadata.created_at,
+            backup_id = metadata.backup_id,
+        },
+        libby = { identity = self.settings.libby_identity },
+        adobe = { registration = adobe_profile },
+    }
+    local encoded, encode_err = AccountBackup.encode(payload, password, metadata)
+    if not encoded then return nil, encode_err end
+    local backup_dir = self:account_backup_dir()
+    if not require("util").makePath(backup_dir) then return nil, "Could not create account backup directory: " .. backup_dir end
+    local filename, filename_err = AccountBackup.filename(metadata)
+    if not filename then return nil, filename_err end
+    local path = backup_dir .. "/" .. filename
     local file, file_err = io.open(path, "wb")
     if not file then return nil, file_err end
-    local ok, encoded = pcall(rapidjson.encode, profile)
-    if not ok or type(encoded) ~= "string" then file:close(); return nil, tostring(encoded or "Could not encode Adobe registration") end
     file:write(encoded)
     file:close()
-    return path
+    return path, metadata
 end
 
-function KOReaderController:import_adobe_registration(path)
-    path = path or self:adobe_export_path()
+function KOReaderController:import_account_backup(password, path)
+    if not path then
+        local found = self:find_account_backups()
+        if #found == 0 then return nil, "No encrypted account backup was found" end
+        if #found > 1 then return nil, "Multiple account backups were found; select one to restore" end
+        path = found[1].path
+    end
     local file, file_err = io.open(path, "rb")
     if not file then return nil, file_err end
     local contents = file:read("*a")
     file:close()
-    local ok, decoded = pcall(rapidjson.decode, contents)
-    if not ok or type(decoded) ~= "table" then return nil, "Adobe authorization file is invalid" end
-    local profile, profile_err = AdobeProfile.normalize(decoded)
-    if not profile then return nil, profile_err end
-    self.settings.adobe_registration = profile
+    local payload, decode_err = require("account_backup").decode(contents, password)
+    if not payload then return nil, decode_err end
+    if payload.format ~= "libby-dashboard-account-data" or payload.version ~= 1 then return nil, "Account backup payload is invalid" end
+    local restored_libby = type(payload.libby) == "table" and type(payload.libby.identity) == "string" and payload.libby.identity ~= ""
+    local restored_adobe = false
+    local profile
+    if type(payload.adobe) == "table" and payload.adobe.registration then
+        local profile_err
+        profile, profile_err = AdobeProfile.normalize(payload.adobe.registration)
+        if not profile then return nil, profile_err end
+        restored_adobe = true
+    end
+    if not restored_libby and not restored_adobe then return nil, "Account backup contains no restorable authentication" end
+    if restored_libby then self.settings.libby_identity = payload.libby.identity end
+    if restored_adobe then self.settings.adobe_registration = profile end
+    self.settings.libby_snapshot = nil
     local saved, save_err = self:save()
     if not saved then return nil, save_err end
-    return AdobeProfile.summary(profile)
+    return { libby = restored_libby, adobe = restored_adobe, path = path, backup = payload.backup }
 end
 
 function KOReaderController:reset_adobe_registration()

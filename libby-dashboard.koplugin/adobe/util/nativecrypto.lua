@@ -86,6 +86,7 @@ typedef struct bio_st BIO;
 typedef struct bignum_st BIGNUM;
 typedef struct evp_cipher_ctx_st EVP_CIPHER_CTX;
 typedef struct evp_cipher_st EVP_CIPHER;
+typedef struct evp_md_st EVP_MD;
 typedef struct pkcs8_priv_key_info_st PKCS8_PRIV_KEY_INFO;
 
 void OPENSSL_add_all_algorithms_noconf(void);
@@ -94,6 +95,9 @@ void OpenSSL_add_all_digests(void);
 
 int RAND_bytes(unsigned char *buf, int num);
 unsigned char *SHA1(const unsigned char *d, size_t n, unsigned char *md);
+const EVP_MD *EVP_sha256(void);
+int PKCS5_PBKDF2_HMAC(const char *pass, int passlen, const unsigned char *salt, int saltlen, int iter, const EVP_MD *digest, int keylen, unsigned char *out);
+unsigned char *HMAC(const EVP_MD *evp_md, const void *key, int key_len, const unsigned char *d, size_t n, unsigned char *md, unsigned int *md_len);
 
 EVP_CIPHER_CTX *EVP_CIPHER_CTX_new(void);
 void EVP_CIPHER_CTX_free(EVP_CIPHER_CTX *c);
@@ -271,6 +275,22 @@ function nativecrypto.rand_bytes(n)
         return nil, "RAND_bytes failed"
     end
     return ffi.string(buf, n)
+end
+
+function nativecrypto.pbkdf2_sha256(password, salt, iterations, length)
+    local out = ffi.new("unsigned char[?]", length)
+    local ok = libcrypto.PKCS5_PBKDF2_HMAC(password, #password, salt, #salt, iterations, libcrypto.EVP_sha256(), length, out)
+    if ok ~= 1 then return nil, "PBKDF2-HMAC-SHA256 failed" end
+    return ffi.string(out, length)
+end
+
+function nativecrypto.hmac_sha256(key, data)
+    local out = ffi.new("unsigned char[32]")
+    local out_len = ffi.new("unsigned int[1]")
+    if libcrypto.HMAC(libcrypto.EVP_sha256(), key, #key, data, #data, out, out_len) == nil or out_len[0] ~= 32 then
+        return nil, "HMAC-SHA256 failed"
+    end
+    return ffi.string(out, 32)
 end
 
 function nativecrypto.sha1(data)
