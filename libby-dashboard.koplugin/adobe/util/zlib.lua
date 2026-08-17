@@ -38,6 +38,7 @@ const char *zlibVersion(void);
 int inflateInit2_(z_stream *strm, int windowBits, const char *version, int stream_size);
 int inflate(z_stream *strm, int flush);
 int inflateEnd(z_stream *strm);
+uLong crc32(uLong crc, const Bytef *buf, uInt len);
 ]])
 
 --- Resolve the system library directory for a given architecture.
@@ -223,6 +224,15 @@ function buildInflater(stream)
     inflater.close = inflater.finalize
 
     return inflater
+end
+
+function zlib.crc32(data)
+    if type(data) ~= "string" then
+        return nil, "crc32 expects string data"
+    end
+    local crc = libz.crc32(0, nil, 0)
+    crc = libz.crc32(crc, ffi.cast("const Bytef *", data), #data)
+    return tonumber(crc)
 end
 
 return zlib

@@ -72,11 +72,33 @@ function LibbyDashboard:init()
     self.controller:load()
     local CreDocument = require("document/credocument")
     local ProtectedEpub = require("protected_epub")
-    CreDocument.protected_document_resolver = function(path)
-        return ProtectedEpub.resolve(path, self.controller.settings)
-    end
+    ProtectedEpub.install(CreDocument, function()
+        return self.controller.settings
+    end)
     self:registerAcsmProvider()
     self.ui.menu:registerToMainMenu(self)
+end
+
+function LibbyDashboard:closeCatalogBrowser(full_refresh)
+    if self.catalog_refresh_tick then
+        UIManager:unschedule(self.catalog_refresh_tick)
+        self.catalog_refresh_tick = nil
+    end
+    if self.catalog_browser then
+        UIManager:close(self.catalog_browser)
+        self.catalog_browser = nil
+    end
+    if full_refresh then
+        UIManager:setDirty(nil, "full")
+    end
+end
+
+function LibbyDashboard:onExit()
+    self:closeCatalogBrowser(true)
+end
+
+function LibbyDashboard:onCloseWidget()
+    self:closeCatalogBrowser(false)
 end
 
 function LibbyDashboard:registerAcsmProvider()
@@ -812,12 +834,7 @@ function LibbyDashboard:showBrowser()
             self:showSettings()
         end,
         close_callback = function()
-            if self.catalog_refresh_tick then
-                UIManager:unschedule(self.catalog_refresh_tick)
-                self.catalog_refresh_tick = nil
-            end
-            UIManager:close(self.catalog_browser)
-            self.catalog_browser = nil
+            self:closeCatalogBrowser(false)
         end,
     }
     UIManager:show(self.catalog_browser)

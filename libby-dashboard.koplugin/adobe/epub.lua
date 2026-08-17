@@ -306,6 +306,46 @@ local function decryptAdeptEntryFile(fullPath, bookKey, noDecomp)
     return true
 end
 
+-- Decrypt one ADEPT EPUB member entirely in memory. Protected reading uses
+-- this path so plaintext members are never extracted to persistent storage.
+local function decryptAdeptEntryMemory(data, bookKey, noDecomp)
+    if type(data) ~= "string" or #data < 32 or (#data % 16) ~= 0 then
+        return nil, "Invalid ADEPT encrypted member length"
+    end
+
+    local decrypted, decryptErr = nativecrypto.aes_cbc_decrypt(
+        bookKey,
+        string.rep("\0", 16),
+        data,
+        true
+    )
+    if not decrypted then
+        return nil, "AES-CBC decrypt failed: " .. tostring(decryptErr)
+    end
+    if #decrypted < 32 then
+        return nil, "ADEPT decrypted member is too short"
+    end
+
+    local pad = decrypted:byte(#decrypted)
+    if not pad or pad < 1 or pad > 16 or pad > (#decrypted - 16) then
+        return nil, "Invalid PKCS#7 padding"
+    end
+    for i = #decrypted - pad + 1, #decrypted do
+        if decrypted:byte(i) ~= pad then
+            return nil, "Invalid PKCS#7 padding"
+        end
+    end
+
+    -- ADEPT prepends a 16-byte random prefix before the original member data.
+    local payload = decrypted:sub(17, #decrypted - pad)
+    decrypted = nil
+
+    if noDecomp then
+        return payload
+    end
+    return zlib.inflateRaw(payload)
+end
+
 local function makeTempDir()
     local cacheDir = DataStorage:getDataDir() .. "/cache/acsm.koplugin"
     if lfs.attributes(cacheDir, "mode") ~= "directory" then
@@ -393,6 +433,7 @@ local function repackEpub(workDir, outputPath)
     end
 
     writer:setZipCompression("store")
+    report("info", "repack: writing mimetype")
     if not writer:addFileFromMemory("mimetype", mimetype, mtime) then
         writer:close()
         return nil, writer.err or "Could not write mimetype"
@@ -509,6 +550,245 @@ local function stripAdeptWatermarks(workDir)
     return modifiedFiles
 end
 
+local function le16(value)
+    value = value % 0x10000
+    return string.char(value % 0x100, math.floor(value / 0x100) % 0x100)
+end
+
+local function le32(value)
+    value = value % 0x100000000
+    return string.char(
+        value % 0x100,
+        math.floor(value / 0x100) % 0x100,
+        math.floor(value / 0x10000) % 0x100,
+        math.floor(value / 0x1000000) % 0x100
+    )
+end
+
+local function writeAll(fd, data)
+    if data == "" then return true end
+    local offset = 0
+    while offset < #data do
+        local written = ffi.C.write(fd, data:sub(offset + 1), #data - offset)
+        if written < 0 then
+            return nil, "write() failed: errno=" .. tostring(ffi.errno())
+        end
+        if written == 0 then
+            return nil, "write() returned 0"
+        end
+        offset = offset + tonumber(written)
+    end
+    return true
+end
+
+local function newMemoryZipWriter(fd)
+    if not fd then return nil, "Missing output file descriptor" end
+    pcall(ffi.cdef, [[
+        ssize_t write(int fd, const void *buf, size_t count);
+        off_t lseek(int fd, off_t offset, int whence);
+    ]])
+
+    local writer = {
+        fd = fd,
+        offset = 0,
+        entries = {},
+        closed = false,
+        err = nil,
+    }
+
+    function writer:addFileFromMemory(name, content)
+        if self.closed then return nil end
+        if type(name) ~= "string" or type(content) ~= "string" then
+            self.err = "ZIP entry requires string name/content"
+            return nil
+        end
+        if #self.entries >= 0xFFFF or #name > 0xFFFF or #content >= 0x100000000 then
+            self.err = "ZIP32 limits exceeded"
+            return nil
+        end
+
+        local crc, crcErr = zlib.crc32(content)
+        if crc == nil then
+            self.err = crcErr or "Could not calculate CRC32"
+            return nil
+        end
+        local localOffset = self.offset
+        local header = le32(0x04034B50)
+            .. le16(20) .. le16(0) .. le16(0)
+            .. le16(0) .. le16(0)
+            .. le32(crc) .. le32(#content) .. le32(#content)
+            .. le16(#name) .. le16(0) .. name
+        local ok, err = writeAll(self.fd, header)
+        if not ok then self.err = err return nil end
+        self.offset = self.offset + #header
+        ok, err = writeAll(self.fd, content)
+        if not ok then self.err = err return nil end
+        self.offset = self.offset + #content
+        self.entries[#self.entries + 1] = {
+            name = name,
+            crc = crc,
+            size = #content,
+            offset = localOffset,
+        }
+        return true
+    end
+
+    function writer:setZipCompression()
+        return true
+    end
+
+    function writer:close()
+        if self.closed then return self.err == nil end
+        local centralOffset = self.offset
+        for _, entry in ipairs(self.entries) do
+            local record = le32(0x02014B50)
+                .. le16(20) .. le16(20) .. le16(0) .. le16(0)
+                .. le16(0) .. le16(0)
+                .. le32(entry.crc) .. le32(entry.size) .. le32(entry.size)
+                .. le16(#entry.name) .. le16(0) .. le16(0)
+                .. le16(0) .. le16(0) .. le32(0)
+                .. le32(entry.offset) .. entry.name
+            local ok, err = writeAll(self.fd, record)
+            if not ok then self.err = err return nil end
+            self.offset = self.offset + #record
+        end
+        local centralSize = self.offset - centralOffset
+        local count = #self.entries
+        local eocd = le32(0x06054B50)
+            .. le16(0) .. le16(0)
+            .. le16(count) .. le16(count)
+            .. le32(centralSize) .. le32(centralOffset)
+            .. le16(0)
+        local ok, err = writeAll(self.fd, eocd)
+        if not ok then self.err = err return nil end
+        self.offset = self.offset + #eocd
+        self.closed = true
+        ffi.C.lseek(self.fd, 0, 0)
+        return true
+    end
+
+    return writer
+end
+
+function epub.decryptAdobeEpubInMemory(inputPath, outputPath, bookKey, outputFd, progress)
+    logger.info("[ACSM] decryptAdobeEpubInMemory: input=", inputPath, "output=", outputPath, "fd=", outputFd)
+    local function report(level, ...)
+        if progress then pcall(progress, level, ...) end
+    end
+    report("info", "repack: opening encrypted source archive")
+
+    local indexReader = Archiver.Reader:new()
+    if not indexReader:open(inputPath) then
+        return nil, indexReader.err or "Could not open EPUB archive"
+    end
+    for _ in indexReader:iterate() do end
+
+    local encryptionXml = indexReader:extractToMemory("META-INF/encryption.xml")
+    if not encryptionXml then
+        local err = indexReader.err or "Missing META-INF/encryption.xml"
+        indexReader:close()
+        return nil, err
+    end
+    local mimetype = indexReader:extractToMemory("mimetype")
+    if not mimetype then
+        local err = indexReader.err or "Missing mimetype"
+        indexReader:close()
+        return nil, err
+    end
+    indexReader:close()
+
+    local parsed = parseEncryptionXml(encryptionXml)
+    encryptionXml = nil
+    report("info", "repack: source metadata parsed")
+
+    report("info", "repack: opening plugin ZIP writer on fd", outputFd)
+    local writer, writerErr = newMemoryZipWriter(outputFd)
+    if not writer then
+        report("err", "repack: ZIP writer open failed", writerErr)
+        return nil, writerErr or "Could not open EPUB writer"
+    end
+    report("info", "repack: plugin ZIP writer ready")
+
+    local function fail(message)
+        writer:close()
+        return nil, message
+    end
+
+    local mtime = os.time()
+    writer:setZipCompression("store")
+    if not writer:addFileFromMemory("mimetype", mimetype, mtime) then
+        return fail(writer.err or "Could not write mimetype")
+    end
+    mimetype = nil
+    report("info", "repack: mimetype written")
+    writer:setZipCompression("deflate")
+
+    local reader = Archiver.Reader:new()
+    if not reader:open(inputPath) then
+        return fail(reader.err or "Could not reopen EPUB archive")
+    end
+
+    local decryptedEntries = 0
+    for entry in reader:iterate() do
+        if entry.mode == "file" and entry.path ~= "mimetype" and entry.path ~= "META-INF/rights.xml" then
+            local content = reader:extractToMemory(entry.path)
+            if not content then
+                local err = reader.err or ("Could not read " .. entry.path)
+                reader:close()
+                return fail(err)
+            end
+
+            if entry.path == "META-INF/encryption.xml" then
+                content = parsed.rewrittenXml
+            elseif parsed.encrypted[entry.path] then
+                local decrypted, err = decryptAdeptEntryMemory(content, bookKey, false)
+                if not decrypted then
+                    reader:close()
+                    return fail("Failed to decrypt " .. entry.path .. ": " .. tostring(err))
+                end
+                content = decrypted
+                decryptedEntries = decryptedEntries + 1
+            elseif parsed.encryptedForceNoDecomp[entry.path] then
+                local decrypted, err = decryptAdeptEntryMemory(content, bookKey, true)
+                if not decrypted then
+                    reader:close()
+                    return fail("Failed to decrypt " .. entry.path .. ": " .. tostring(err))
+                end
+                content = decrypted
+                decryptedEntries = decryptedEntries + 1
+            end
+
+            if content ~= nil then
+                if not writer:addFileFromMemory(entry.path, content, mtime) then
+                    local err = writer.err or ("Could not write " .. entry.path)
+                    reader:close()
+                    return fail(err)
+                end
+            end
+            content = nil
+            if decryptedEntries > 0 and decryptedEntries % 25 == 0 then
+                report("info", "repack: decrypted entries", decryptedEntries)
+            end
+            collectgarbage("step", 200)
+        end
+    end
+
+    reader:close()
+    report("info", "repack: finalizing ZIP", decryptedEntries, "protected entries")
+    if not writer:close() then
+        report("err", "repack: ZIP finalization failed", writer.err)
+        return nil, writer.err or "Could not finalize EPUB ZIP"
+    end
+    report("info", "repack: ZIP finalized")
+    logger.info("[ACSM] decryptAdobeEpubInMemory: repacked", decryptedEntries, "protected entries")
+    return {
+        outputPath = outputPath,
+        decryptedEntries = decryptedEntries,
+        remainingEncryptionXml = parsed.rewrittenXml ~= nil,
+        strippedWatermarkFiles = 0,
+    }
+end
+
 function epub.decryptAdobeEpub(inputPath, outputPath, bookKey)
     logger.info("[ACSM] decryptAdobeEpub: input=", inputPath, "output=", outputPath)
     local workDir, workErr = makeTempDir()
@@ -607,5 +887,7 @@ epub._removeTree = removeTree
 epub._stripPkcs7Held = stripPkcs7Held
 epub._stripAdeptWatermarksFromText = stripAdeptWatermarksFromText
 epub._decryptAdeptEntryFile = decryptAdeptEntryFile
+epub._decryptAdeptEntryMemory = decryptAdeptEntryMemory
+epub._newMemoryZipWriter = newMemoryZipWriter
 
 return epub
