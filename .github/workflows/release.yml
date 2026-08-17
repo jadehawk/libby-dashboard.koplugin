@@ -2,8 +2,8 @@ name: Release Libby Dashboard KOReader Plugin
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -15,7 +15,6 @@ concurrency:
 
 jobs:
   release:
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'v')
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -28,26 +27,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version=$(sed -n 's/^local PLUGIN_VERSION = "\([^"]*\)"/\1/p' libby-dashboard.koplugin/main.lua)
+          version=$(awk -F'"' '/^[[:space:]]*version[[:space:]]*=/ { print $2; exit }' libby-dashboard.koplugin/_meta.lua)
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "PLUGIN_VERSION must be a semantic version (x.y.z); got: $version" >&2
+            echo "Plugin version in _meta.lua must be a semantic version (x.y.z); got: $version" >&2
             exit 1
           fi
           tag="v${version}"
           readme_version=$(sed -n 's/^Current plugin version: \*\*\([^*]*\)\*\*$/\1/p' README.md)
           if [[ "$readme_version" != "$version" ]]; then
-            echo "README version must match PLUGIN_VERSION; README=$readme_version plugin=$version" >&2
+            echo "README version must match _meta.lua; README=$readme_version plugin=$version" >&2
             exit 1
           fi
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            subject=$(git log -1 --pretty=%s)
-            if [[ "$subject" != "$tag" ]]; then
-              echo "Release commit subject must exactly match ${tag}; got: ${subject}" >&2
-              exit 1
-            fi
-          fi
-          if git rev-parse "$tag" >/dev/null 2>&1; then
-            echo "Tag ${tag} already exists." >&2
+          if [[ "${{ github.event_name }}" == "push" && "${GITHUB_REF_NAME}" != "$tag" ]]; then
+            echo "Pushed tag must match plugin version; pushed=${GITHUB_REF_NAME} expected=${tag}" >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -89,8 +81,6 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ steps.version.outputs.tag }}"
-          git tag "$tag"
-          git push origin "$tag"
           gh release create "$tag" libby-dashboard.koplugin.zip \
             --title "$tag" \
             --generate-notes
