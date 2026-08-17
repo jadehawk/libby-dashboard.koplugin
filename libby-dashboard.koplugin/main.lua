@@ -142,19 +142,35 @@ function LibbyDashboard:isFileTypeSupported(file)
     return type(file) == "string" and koUtil.getFileNameSuffix(file):lower() == "acsm"
 end
 
-function LibbyDashboard:externalAcsmOutputPath(file)
-    local input = io.open(file, "rb")
-    local contents = input and input:read("*a") or ""
-    if input then input:close() end
-    local extension = contents:find("application/pdf", 1, true) and ".pdf" or ".epub"
-    local base = file:gsub("%.[Aa][Cc][Ss][Mm]$", "")
-    local desired = base .. extension
-    if not koUtil.pathExists(desired) then return desired end
-    for index = 1, 999 do
-        local candidate = base .. " (" .. tostring(index) .. ")" .. extension
-        if not koUtil.pathExists(candidate) then return candidate end
+function LibbyDashboard:externalAcsmOutputPath(file, model, extension)
+    model = type(model) == "table" and model or {}
+    extension = extension or "epub"
+
+    local fallbackTitle = tostring(file or ""):match("([^/]+)%.[Aa][Cc][Ss][Mm]$")
+        or tostring(file or ""):match("([^/]+)$")
+        or "External ACSM"
+    if not model.title or model.title == "" then model.title = fallbackTitle end
+    if not model.library or model.library == "" then model.library = "External ACSM" end
+
+    local desired = self.controller:book_destination(model, extension)
+    local parent = util.dirname(desired)
+    if parent and parent ~= "" and not koUtil.makePath(parent) then
+        return nil, "Could not create destination folder: " .. tostring(parent)
     end
-    return desired
+
+    local function available(path)
+        return not koUtil.pathExists(path) and not koUtil.pathExists(path .. ".rights")
+    end
+    if available(desired) then return desired end
+
+    local stem, ext = desired:match("^(.*)(%.[^./]+)$")
+    stem = stem or desired
+    ext = ext or ("." .. extension)
+    for index = 1, 999 do
+        local candidate = stem .. " (" .. tostring(index) .. ")" .. ext
+        if available(candidate) then return candidate end
+    end
+    return nil, "Could not find an unused destination filename"
 end
 
 function LibbyDashboard:openFile(file)
@@ -173,9 +189,31 @@ function LibbyDashboard:openFile(file)
             return
         end
 
-        local output = self:externalAcsmOutputPath(file)
+        local metadata_ok, EpubMetadata = pcall(require, "epub_metadata")
+        if not metadata_ok then
+            EpubMetadata = {
+                fromAcsm = function() return {} end,
+                fromEpub = function() return {} end,
+                merge = function(primary, fallback)
+                    local result = {}
+                    for key, value in pairs(fallback or {}) do result[key] = value end
+                    for key, value in pairs(primary or {}) do result[key] = value end
+                    return result
+                end,
+            }
+        end
+        local acsmMetadata = EpubMetadata.fromAcsm(file) or {}
         Trapper:info(_("Downloading book..."), false, true)
-        local result, fulfill_err = self.controller:fulfill_acsm(file, output)
+        local result, fulfill_err = self.controller:fulfill_acsm(file, nil, {
+            resolve_output_path = function(downloadedPath, format)
+                local downloadedMetadata = {}
+                if format and format.is_epub then
+                    downloadedMetadata = EpubMetadata.fromEpub(downloadedPath) or {}
+                end
+                local model = EpubMetadata.merge(downloadedMetadata, acsmMetadata)
+                return self:externalAcsmOutputPath(file, model, format and format.extension or "epub")
+            end,
+        })
         if not result then
             Trapper:reset()
             UIManager:show(InfoMessage:new{

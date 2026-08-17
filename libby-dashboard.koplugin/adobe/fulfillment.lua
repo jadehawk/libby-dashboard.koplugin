@@ -584,6 +584,20 @@ function fulfillment.process(acsmPath, outputPath, creds, deviceUUID, fingerprin
 
     logger.info("[ACSM] fulfillment.process: format detected: ", isPdf and "PDF" or (isEpub and "EPUB" or "unknown"))
 
+    if type(options.resolve_output_path) == "function" then
+        local resolvedPath, resolveErr = options.resolve_output_path(tmpFile, {
+            is_epub = isEpub,
+            is_pdf = isPdf,
+            extension = isPdf and "pdf" or (isEpub and "epub" or nil),
+        })
+        if not resolvedPath then
+            os.remove(tmpFile)
+            return nil, "Could not resolve book destination: " .. tostring(resolveErr or "unknown error")
+        end
+        outputPath = resolvedPath
+        logger.info("[ACSM] fulfillment.process: resolved outputPath=", outputPath)
+    end
+
     local preparedInfo, prepareErr
     local bookKey -- may be nil for PDF or protected EPUB
     local protectedMode = options.protected_epub == true and isEpub

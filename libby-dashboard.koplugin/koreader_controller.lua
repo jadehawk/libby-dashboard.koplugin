@@ -496,7 +496,10 @@ function KOReaderController:adobe_summary()
 end
 
 function KOReaderController:fulfill_acsm(acsm_path, output_path, options)
-    options = options or { protected_epub = self.settings.developer_mode ~= true }
+    options = options or {}
+    if options.protected_epub == nil then
+        options.protected_epub = self.settings.developer_mode ~= true
+    end
     local profile, profile_err = AdobeProfile.normalize(self.settings.adobe_registration)
     if not profile then return nil, profile_err end
 

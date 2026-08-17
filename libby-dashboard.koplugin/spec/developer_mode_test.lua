@@ -53,6 +53,10 @@ normal:load()
 assert(normal.settings.developer_mode == false)
 normal:fulfill_acsm("book.acsm", "book.epub")
 assert(captured_options.protected_epub == true, "normal mode must preserve DRM-protected EPUBs")
+local resolver = function() return "resolved.epub" end
+normal:fulfill_acsm("book.acsm", nil, { resolve_output_path = resolver })
+assert(captured_options.protected_epub == true, "adding a destination resolver must preserve normal protected mode")
+assert(captured_options.resolve_output_path == resolver)
 
 local developer = KOReaderController.new{ settings_store = storeWith({ developer_mode = true, adobe_registration = { ok = true } }) }
 developer:load()
