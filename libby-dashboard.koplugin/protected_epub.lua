@@ -1,12 +1,8 @@
 local ProtectedEpub = {}
 
 local AdobeProfile = require("adobe_profile")
-local DataStorage = require("datastorage")
 local koUtil = require("util")
 local logger = require("logger")
-
-local TRACE_DIR = DataStorage:getSettingsDir() .. "/libby-dashboard"
-local TRACE_PATH = TRACE_DIR .. "/protected-reader.log"
 
 local function trace(level, ...)
     local parts = {}
@@ -15,14 +11,6 @@ local function trace(level, ...)
     end
     local message = table.concat(parts, " ")
     if logger[level] then logger[level]("[Libby Protected]", message) end
-    pcall(function()
-        koUtil.makePath(TRACE_DIR)
-        local file = io.open(TRACE_PATH, "ab")
-        if not file then return end
-        file:write(os.date("!%Y-%m-%dT%H:%M:%SZ"), " [", level, "] ", message, "\n")
-        file:flush()
-        file:close()
-    end)
 end
 
 

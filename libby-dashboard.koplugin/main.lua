@@ -32,7 +32,7 @@ local LibbyCatalog = require("libby_catalog")
 local LoanModel = require("loan_model")
 local PathTemplate = require("path_template")
 
-local PLUGIN_VERSION = "0.1.1"
+local PLUGIN_VERSION = "0.2.0"
 local DEV_OPTIONS_CODE_SHA256 = "5a9797edd88b30dbcd6df95d8605f487d43c15ccd11ebee1aafda677433d4c54"
 
 -- Load the vendored Adobe stack while PluginLoader still has this plugin's
