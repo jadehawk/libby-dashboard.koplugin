@@ -379,28 +379,44 @@ function LibbyCatalog:heroWidget(width, height)
     local cover_w = math.floor(cover_h * 0.66)
     local path = self.cover_path_callback and self.cover_path_callback(loan) or nil
     local text_w = math.max(1, width - cover_w - 4 * pad - text_inset)
+    local hero_ratio = height / math.max(1, width)
+    local font_step = hero_ratio >= 0.58 and 3 or (hero_ratio >= 0.50 and 2 or 0)
+    local title_face = Font:getFace("cfont", 22 + font_step)
+    local metadata_face = Font:getFace("smallinfofont", 17 + font_step)
     local info_top = VerticalGroup:new{ align = "left" }
-    table.insert(info_top, TextBoxWidget:new{
-        text = safeText(loan.title or _("Untitled"), 120), width = text_w,
-        height = Screen:scaleBySize(30),
-        bold = true, face = Font:getFace("cfont", 22), height_overflow_show_ellipsis = true,
+    table.insert(info_top, TextWidget:new{
+        text = safeText(loan.title or _("Untitled"), 120),
+        bold = true,
+        face = title_face,
+        max_width = text_w,
     })
 
-    local metadata_face = Font:getFace("smallinfofont", 17)
     local metadata_rows = {
-        _("Author: ") .. safeText(loan.author or _("N/A"), 80),
-        _("Series: ") .. safeText(loan.series or _("N/A"), 80),
-        _("Series Index: ") .. safeText(loan.series_index ~= nil and tostring(loan.series_index) or _("N/A"), 40),
-        _("Format: ") .. mediaLabel(loan),
-        _("Library: ") .. safeText(loan.library or _("N/A"), 100),
-        _("Expires On: ") .. (loan.days_remaining ~= nil and (tostring(loan.days_remaining) .. _(" days left")) or _("N/A")),
+        { label = _("Author: "), value = safeText(loan.author or _("N/A"), 80) },
+        { label = _("Series: "), value = safeText(loan.series or _("N/A"), 80) },
+        { label = _("Series Index: "), value = safeText(loan.series_index ~= nil and tostring(loan.series_index) or _("N/A"), 40) },
+        { label = _("Format: "), value = mediaLabel(loan) },
+        { label = _("Library: "), value = safeText(loan.library or _("N/A"), 100) },
+        { label = _("Expires On: "), value = loan.days_remaining ~= nil and (tostring(loan.days_remaining) .. _(" days left")) or _("N/A") },
     }
     for _, row in ipairs(metadata_rows) do
-        table.insert(info_top, TextBoxWidget:new{
-            text = row,
-            width = text_w,
+        local label = TextWidget:new{
+            text = row.label,
             face = metadata_face,
-            height_overflow_show_ellipsis = true,
+        }
+        local value_w = math.max(1, text_w - label:getSize().w)
+        local row_h = math.max(1, label:getSize().h - Screen:scaleBySize(4))
+        label.forced_height = row_h
+        table.insert(info_top, HorizontalGroup:new{
+            align = "center",
+            label,
+            TextWidget:new{
+                text = row.value,
+                bold = true,
+                face = metadata_face,
+                max_width = value_w,
+                forced_height = row_h,
+            },
         })
     end
 
