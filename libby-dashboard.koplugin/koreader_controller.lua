@@ -24,6 +24,7 @@ local DEFAULTS = {
     libby_identity = nil,
     downloaded_loans = {},
     cleanup_mode = "normal",
+    developer_mode = false,
     adobe_registration = nil,
 }
 
@@ -74,6 +75,9 @@ function KOReaderController:load()
 
     self.settings = copy_defaults()
     for key, value in pairs(loaded or {}) do self.settings[key] = value end
+    if type(loaded) == "table" and loaded.developer_mode == nil and self.settings.cleanup_mode == "dry_run" then
+        self.settings.developer_mode = true
+    end
     if self.settings.book_path_template == PathTemplate.LEGACY_DEFAULT_TEMPLATE
             or not PathTemplate.validate(self.settings.book_path_template) then
         self.settings.book_path_template = PathTemplate.DEFAULT_TEMPLATE
@@ -492,7 +496,7 @@ function KOReaderController:adobe_summary()
 end
 
 function KOReaderController:fulfill_acsm(acsm_path, output_path, options)
-    options = options or { protected_epub = true }
+    options = options or { protected_epub = self.settings.developer_mode ~= true }
     local profile, profile_err = AdobeProfile.normalize(self.settings.adobe_registration)
     if not profile then return nil, profile_err end
 

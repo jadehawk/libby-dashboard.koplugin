@@ -32,7 +32,8 @@ local LibbyCatalog = require("libby_catalog")
 local LoanModel = require("loan_model")
 local PathTemplate = require("path_template")
 
-local PLUGIN_VERSION = "0.2.0"
+local PluginMeta = dofile(plugin_root .. "/_meta.lua")
+local PLUGIN_VERSION = assert(PluginMeta.version, "Missing plugin version in _meta.lua")
 local DEV_OPTIONS_CODE_SHA256 = "5a9797edd88b30dbcd6df95d8605f487d43c15ccd11ebee1aafda677433d4c54"
 
 -- Load the vendored Adobe stack while PluginLoader still has this plugin's
@@ -368,7 +369,7 @@ function LibbyDashboard:downloadLoan(loan)
             end
         end
 
-        Trapper:info(_("Downloading and preparing book…"), false, true)
+        Trapper:info(_("Downloading and preparing book…\n\nThis may take a few minutes."), false, true)
         local extension = loan.adobe_format:find("pdf", 1, true) and "pdf" or "epub"
         local output = self.controller:book_destination(loan, extension)
         local fulfilled, fulfill_err = self.controller:fulfill_acsm(destination, output)
@@ -1132,14 +1133,15 @@ function LibbyDashboard:showCleanupDiagnosticPrompt()
                         UIManager:close(dialog)
                         return
                     end
-                    local current = self.controller.settings.cleanup_mode or "normal"
-                    self.controller.settings.cleanup_mode = current == "dry_run" and "normal" or "dry_run"
+                    local enabled = self.controller.settings.developer_mode ~= true
+                    self.controller.settings.developer_mode = enabled
+                    self.controller.settings.cleanup_mode = enabled and "dry_run" or "normal"
                     self.controller:save()
                     UIManager:close(dialog)
                     UIManager:show(InfoMessage:new{
-                        text = self.controller.settings.cleanup_mode == "dry_run"
-                            and _("Cleanup diagnostics enabled. Expired or returned loans will be detected but files will not be deleted.")
-                            or _("Cleanup diagnostics disabled. Normal loan cleanup is active."),
+                        text = enabled
+                            and _("Developer mode enabled. New EPUB downloads will be saved decrypted, and loan cleanup will run in dry-run mode.")
+                            or _("Developer mode disabled. New EPUB downloads will remain DRM-protected, and normal loan cleanup is active."),
                     })
                 end },
             },

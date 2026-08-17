@@ -21,6 +21,7 @@ local FILE_IOFBF = 0
 
 require("ffi/posix_h") -- FILE, fopen, fwrite, fclose, strerror
 pcall(ffi.cdef, "int setvbuf(FILE *stream, char *buf, int mode, size_t size);")
+pcall(ffi.cdef, "int fileno(FILE *stream);")
 
 local function removeTree(path)
     if not path or path == "" or lfs.attributes(path, "mode") ~= "directory" then
@@ -791,93 +792,33 @@ end
 
 function epub.decryptAdobeEpub(inputPath, outputPath, bookKey)
     logger.info("[ACSM] decryptAdobeEpub: input=", inputPath, "output=", outputPath)
-    local workDir, workErr = makeTempDir()
-    if not workDir then
-        return nil, workErr
+
+    local stream = ffi.C.fopen(outputPath, "wb")
+    if stream == nil then
+        return nil, "Could not create decrypted EPUB: " .. ffi.string(ffi.C.strerror(ffi.errno()))
     end
-    logger.info("[ACSM] decryptAdobeEpub: workDir=", workDir)
-    local ok, err = extractEpub(inputPath, workDir)
-    if not ok then
-        logger.warn("[ACSM] decryptAdobeEpub: failed to extract epub:", err)
-        removeTree(workDir)
+
+    local fd = ffi.C.fileno(stream)
+    if fd < 0 then
+        local err = ffi.string(ffi.C.strerror(ffi.errno()))
+        ffi.C.fclose(stream)
+        os.remove(outputPath)
+        return nil, "Could not access decrypted EPUB file descriptor: " .. err
+    end
+
+    local result, err = epub.decryptAdobeEpubInMemory(inputPath, outputPath, bookKey, fd)
+    local closeRc = ffi.C.fclose(stream)
+    if not result then
+        os.remove(outputPath)
         return nil, err
     end
-    logger.info("[ACSM] decryptAdobeEpub: extracted, reading encryption.xml...")
-
-    local encryptionPath = workDir .. "/META-INF/encryption.xml"
-    local encryptionXml = koutil.readFromFile(encryptionPath, "rb")
-    if not encryptionXml then
-        removeTree(workDir)
-        return nil, "Missing META-INF/encryption.xml"
+    if closeRc ~= 0 then
+        os.remove(outputPath)
+        return nil, "Could not finalize decrypted EPUB"
     end
 
-    local parsed = parseEncryptionXml(encryptionXml)
-    logger.info("[ACSM] decryptAdobeEpub: parsed encryption, decrypting entries...")
-
-    local decryptCount = 0
-    for relPath in pairs(parsed.encrypted) do
-        local fullPath = workDir .. "/" .. relPath
-        local _decOk, decErr = decryptAdeptEntryFile(fullPath, bookKey, false)
-        if not _decOk then
-            removeTree(workDir)
-            return nil, "Failed to decrypt " .. relPath .. ": " .. decErr
-        end
-        collectgarbage("step", 200)
-        decryptCount = decryptCount + 1
-    end
-    logger.info("[ACSM] decryptAdobeEpub: decrypted", decryptCount, "entries with decompression")
-
-    local forceNoDecompCount = 0
-    for relPath in pairs(parsed.encryptedForceNoDecomp) do
-        local fullPath = workDir .. "/" .. relPath
-        local _decOk, decErr = decryptAdeptEntryFile(fullPath, bookKey, true)
-        if not _decOk then
-            removeTree(workDir)
-            return nil, "Failed to decrypt " .. relPath .. ": " .. decErr
-        end
-        collectgarbage("step", 200)
-        forceNoDecompCount = forceNoDecompCount + 1
-    end
-    logger.info("[ACSM] decryptAdobeEpub: decrypted", forceNoDecompCount, "entries without decompression")
-
-    os.remove(workDir .. "/META-INF/rights.xml")
-    if parsed.rewrittenXml then
-        assert(koutil.writeToFile(parsed.rewrittenXml, encryptionPath))
-    else
-        os.remove(encryptionPath)
-    end
-
-    local watermarkFiles, watermarkErr = stripAdeptWatermarks(workDir)
-    if not watermarkFiles then
-        removeTree(workDir)
-        return nil, watermarkErr
-    end
-
-    local repackOk, repackErr = repackEpub(workDir, outputPath)
-    if not repackOk then
-        logger.warn("[ACSM] decryptAdobeEpub: failed to repack:", repackErr)
-        removeTree(workDir)
-        return nil, repackErr
-    end
     logger.info("[ACSM] decryptAdobeEpub: repacked successfully to", outputPath)
-
-    removeTree(workDir)
-
-    return {
-        outputPath = outputPath,
-        decryptedEntries = (function()
-            local count = 0
-            for _ in pairs(parsed.encrypted) do
-                count = count + 1
-            end
-            for _ in pairs(parsed.encryptedForceNoDecomp) do
-                count = count + 1
-            end
-            return count
-        end)(),
-        remainingEncryptionXml = parsed.rewrittenXml ~= nil,
-        strippedWatermarkFiles = watermarkFiles,
-    }
+    return result
 end
 
 -- Export internal functions for testing (underscore-prefixed = internal API)
