@@ -23,39 +23,40 @@ Libby Dashboard has been successfully tested for Libby login, ByteBooks sign-in,
 - Boox Go 7 Gen 2
 - Kindle Paperwhite Signature Edition (12th Gen)
 - Kobo Clara BW
+- Samsung Galaxy S24-Ultra
 
 ## Screenshots
 
 <p align="center">
-  <img src="assets/01-Main_UI.png" alt="Libby Dashboard main UI" width="350" height="550">
-  <img src="assets/02-Comic-Manga.png" alt="Libby Dashboard comic and manga loan" width="350" height="550">
+  <img src="assets/01-Main_UI.png" alt="Libby Dashboard main UI" width="350" height="750">
+  <img src="assets/02-Comic-Manga.png" alt="Libby Dashboard comic and manga loan" width="350" height="750">
 </p>
 <p align="center">
-  <img src="assets/03-Audiobook.png" alt="Libby Dashboard audiobook loan" width="350" height="550">
-  <img src="assets/04-DownloadBook01.png" alt="Download book flow" width="350" height="550">
+  <img src="assets/03-Audiobook.png" alt="Libby Dashboard audiobook loan" width="350" height="750">
+  <img src="assets/04-DownloadBook01.png" alt="Download book flow" width="350" height="750">
 </p>
 <p align="center">
-  <img src="assets/04-DownloadBook02.png" alt="Download book confirmation" width="350" height="550">
-  <img src="assets/04-DownloadBook03.png" alt="Downloaded book ready to open" width="350" height="550">
+  <img src="assets/04-DownloadBook02.png" alt="Download book confirmation" width="350" height="750">
+  <img src="assets/04-DownloadBook03.png" alt="Downloaded book ready to open" width="350" height="750">
 </p>
 <p align="center">
-  <img src="assets/05-ReturnBook01.png" alt="Return book action" width="350" height="550">
-  <img src="assets/05-ReturnBook02.png" alt="Return book confirmation" width="350" height="550">
+  <img src="assets/05-ReturnBook01.png" alt="Return book action" width="350" height="750">
+  <img src="assets/05-ReturnBook02.png" alt="Return book confirmation" width="350" height="750">
 </p>
 <p align="center">
-  <img src="assets/06-Settings01.png" alt="Libby Dashboard settings" width="350" height="550">
-  <img src="assets/06-Settings02.png" alt="Libby Dashboard settings" width="350" height="550">
+  <img src="assets/06-Settings01.png" alt="Libby Dashboard settings" width="350" height="750">
+  <img src="assets/06-Settings02.png" alt="Libby Dashboard settings" width="350" height="750">
 </p>
 <p align="center">
-  <img src="assets/06-Settings03.png" alt="Libby Dashboard settings" width="350" height="550">
-  <img src="assets/06-Settings04.png" alt="Libby Dashboard settings" width="350" height="550">
+  <img src="assets/06-Settings03.png" alt="Libby Dashboard settings" width="350" height="750">
+  <img src="assets/06-Settings04.png" alt="Libby Dashboard settings" width="350" height="750">
 </p>
 <p align="center">
-  <img src="assets/06-Settings05.png" alt="Libby Dashboard settings" width="350" height="550">
-  <img src="assets/06-Settings06.png" alt="Libby Dashboard settings" width="350" height="550">
+  <img src="assets/06-Settings05.png" alt="Libby Dashboard settings" width="350" height="750">
+  <img src="assets/06-Settings06.png" alt="Libby Dashboard settings" width="350" height="750">
 </p>
 <p align="center">
-  <img src="assets/06-Settings07.png" alt="Libby Dashboard settings" width="350" height="550">
+  <img src="assets/06-Settings07.png" alt="Libby Dashboard settings" width="350" height="750">
 </p>
 
 ## What it does
