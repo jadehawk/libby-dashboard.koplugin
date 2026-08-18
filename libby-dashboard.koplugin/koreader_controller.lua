@@ -1,4 +1,5 @@
 local AdobeProfile = require("adobe_profile")
+local DiagnosticLog = require("diagnostic_log")
 local DataStorage = require("datastorage")
 local LuaSettings = require("luasettings")
 local rapidjson = require("rapidjson")
@@ -148,6 +149,7 @@ function KOReaderController:test_libby_connection()
 end
 
 function KOReaderController:sync_libby()
+    DiagnosticLog.log("[controller] sync_libby:start")
     if not self:libby_authenticated() then
         return nil, "Libby is not authenticated"
     end
@@ -161,6 +163,7 @@ function KOReaderController:sync_libby()
 end
 
 function KOReaderController:return_loan(loan)
+    DiagnosticLog.log("[controller] return_loan:start")
     if type(loan) ~= "table" then return nil, "Loan is missing" end
     if loan.card_id == nil or tostring(loan.card_id) == "" then return nil, "Loan card id is missing" end
     if loan.id == nil or tostring(loan.id) == "" then return nil, "Loan id is missing" end
@@ -221,6 +224,7 @@ function KOReaderController:normalize_libby_state(state)
 end
 
 function KOReaderController:save_libby_snapshot(snapshot)
+    DiagnosticLog.log("[controller] save_snapshot:start")
     if type(snapshot) ~= "table" then return nil, "Libby snapshot is invalid" end
     self.settings.libby_snapshot = snapshot
     return self:save()
@@ -251,6 +255,7 @@ function KOReaderController:downloaded_loan(loan_id)
 end
 
 function KOReaderController:reconcile_downloaded_loans(snapshot, remove_book)
+    DiagnosticLog.log("[controller] reconcile_downloads:start")
     local records = self.settings.downloaded_loans
     if type(records) ~= "table" then
         self.settings.downloaded_loans = {}
@@ -603,6 +608,7 @@ function KOReaderController:find_account_backups()
 end
 
 function KOReaderController:export_account_backup(label, password)
+    DiagnosticLog.log("[controller] account_backup:export:start")
     local AccountBackup = require("account_backup")
     local metadata, metadata_err = AccountBackup.create_metadata(label)
     if not metadata then return nil, metadata_err end
@@ -680,6 +686,7 @@ function KOReaderController:adobe_summary()
 end
 
 function KOReaderController:fulfill_acsm(acsm_path, output_path, options)
+    DiagnosticLog.log("[controller] fulfill_acsm:start")
     options = options or {}
     if options.protected_epub == nil then
         options.protected_epub = self.settings.developer_mode ~= true

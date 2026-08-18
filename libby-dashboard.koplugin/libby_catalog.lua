@@ -1,4 +1,5 @@
 local Blitbuffer = require("ffi/blitbuffer")
+local DiagnosticLog = require("diagnostic_log")
 local Button = require("ui/widget/button")
 local BottomContainer = require("ui/widget/container/bottomcontainer")
 local CenterContainer = require("ui/widget/container/centercontainer")
@@ -673,6 +674,7 @@ function LibbyCatalog:paginationWidget(width, height)
 end
 
 function LibbyCatalog:updateItems()
+    DiagnosticLog.log("[catalog] updateItems:start")
     self.width = Screen:getWidth()
     self.height = Screen:getHeight()
     if self.dimen then
@@ -727,19 +729,26 @@ function LibbyCatalog:updateItems()
         },
     }
 
+    DiagnosticLog.log("[catalog] updateItems:old-widget-free:start")
     if self[1] and self[1].free then self[1]:free() end
+    DiagnosticLog.log("[catalog] updateItems:old-widget-free:end")
     self[1] = overlap
 
+    DiagnosticLog.log("[catalog] updateItems:setDirty:start")
     UIManager:setDirty(self, function()
         return "ui", self.dimen
     end)
+    DiagnosticLog.log("[catalog] updateItems:setDirty:end")
+    DiagnosticLog.log("[catalog] updateItems:end")
 end
 
 function LibbyCatalog:refreshSnapshot(snapshot, state)
+    DiagnosticLog.log("[catalog] refreshSnapshot:start", "state=" .. tostring(state))
     self.snapshot = snapshot or {}
     self.refresh_state = state
     self.selected_loan_id = nil
     self:updateItems()
+    DiagnosticLog.log("[catalog] refreshSnapshot:end")
 end
 
 function LibbyCatalog:onLeftButtonTap()
