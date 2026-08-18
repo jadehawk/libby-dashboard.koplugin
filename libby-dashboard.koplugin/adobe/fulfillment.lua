@@ -42,25 +42,55 @@ local function uniqueCachePath(prefix, suffix)
     return fallback
 end
 
-local function requestToString(request)
-    local sink, resp = socketutil.table_sink({})
-    request.sink = sink
+local TRANSIENT_HTTP_STATUS = {
+    [502] = true,
+    [503] = true,
+    [504] = true,
+}
+local HTTP_MAX_ATTEMPTS = 3
+
+local function requestToString(request, requestBody)
     request.headers = request.headers or {}
     request.headers["User-Agent"] = request.headers["User-Agent"] or socketutil.USER_AGENT
 
-    socketutil:set_timeout(socketutil.FILE_BLOCK_TIMEOUT, socketutil.FILE_TOTAL_TIMEOUT)
-    local ok, code = pcall(function()
-        return socket.skip(1, http.request(request))
-    end)
-    socketutil:reset_timeout()
-    if not ok then
-        return nil, code
+    local lastCode
+    for attempt = 1, HTTP_MAX_ATTEMPTS do
+        local sink, resp = socketutil.table_sink({})
+        request.sink = sink
+        if requestBody ~= nil then
+            request.source = ltn12.source.string(requestBody)
+        end
+
+        socketutil:set_timeout(socketutil.FILE_BLOCK_TIMEOUT, socketutil.FILE_TOTAL_TIMEOUT)
+        local ok, code = pcall(function()
+            return socket.skip(1, http.request(request))
+        end)
+        socketutil:reset_timeout()
+        if not ok then
+            return nil, code
+        end
+
+        local body = table.concat(resp)
+        local numericCode = tonumber(code)
+        lastCode = code
+        if not TRANSIENT_HTTP_STATUS[numericCode] then
+            if numericCode and (numericCode < 200 or numericCode >= 300) then
+                logger.warn("[ACSM] HTTP request failed: status=", numericCode, "url=", tostring(request.url))
+                return nil, "HTTP " .. tostring(numericCode)
+            end
+            if body == "" and not code then
+                return nil, "request failed"
+            end
+            return body, code
+        end
+
+        logger.warn("[ACSM] transient HTTP failure: status=", numericCode, "attempt=", attempt, "url=", tostring(request.url))
+        if attempt < HTTP_MAX_ATTEMPTS and type(socket.sleep) == "function" then
+            socket.sleep(0.5 * attempt)
+        end
     end
-    local body = table.concat(resp)
-    if body == "" and not code then
-        return nil, "request failed"
-    end
-    return body, code
+
+    return nil, "HTTP " .. tostring(lastCode) .. " after " .. tostring(HTTP_MAX_ATTEMPTS) .. " attempts"
 end
 
 local function adeptPost(endpoint, body)
@@ -71,9 +101,10 @@ local function adeptPost(endpoint, body)
             ["Content-Type"] = "application/vnd.adobe.adept+xml",
             ["Content-Length"] = tostring(#body),
         },
-        source = ltn12.source.string(body),
-    })
+    }, body)
 end
+
+fulfillment._requestToString = requestToString
 
 function fulfillment.fetchLicenseServiceCertificate(operatorURL, licenseURL)
     if not operatorURL or not licenseURL then
