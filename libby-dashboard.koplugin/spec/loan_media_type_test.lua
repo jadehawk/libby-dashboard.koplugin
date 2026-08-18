@@ -10,5 +10,9 @@ assert(LoanModel.media_type({ formats = { { name = "Digital Magazine" } } }) == 
 assert(LoanModel.media_type({ type = { id = "audiobook" } }) == "audiobook")
 assert(LoanModel.media_type({ type = { id = "magazine" } }) == "magazine")
 assert(LoanModel.media_type({ formats = { { id = "ebook-kindle" } } }) == "ebook")
+assert(LoanModel.non_adobe_format_label({ formats = { { id = "ebook-kindle" }, { id = "ebook-overdrive" }, { id = "ebook-kobo" } } }) == "Kindle / Libby App")
+assert(LoanModel.non_adobe_format_label({ formats = { { id = "ebook-overdrive" } } }) == "Libby App")
+assert(LoanModel.non_adobe_format_label({ formats = { { id = "ebook-kindle" } } }) == "Kindle")
+assert(LoanModel.non_adobe_format_label({ formats = { { id = "ebook-kobo" } } }) == nil)
 
 print("loan_media_type_test: ok")

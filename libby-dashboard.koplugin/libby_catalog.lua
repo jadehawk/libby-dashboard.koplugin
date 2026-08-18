@@ -189,6 +189,7 @@ local function mediaLabel(loan)
     if loan.media_type == "comic" then return _("Manga/Comic") end
     if loan.adobe_format and loan.adobe_format:find("pdf", 1, true) then return _("PDF") end
     if loan.adobe_format then return _("EPUB") end
+    if loan.non_adobe_format_label then return loan.non_adobe_format_label end
     return _("Unsupported")
 end
 

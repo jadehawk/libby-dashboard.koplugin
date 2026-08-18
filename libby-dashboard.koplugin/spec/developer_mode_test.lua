@@ -18,6 +18,7 @@ package.loaded["loan_model"] = {}
 package.loaded["path_template"] = {
     DEFAULT_TEMPLATE = "{title}",
     LEGACY_DEFAULT_TEMPLATE = "legacy",
+    PREVIOUS_DEFAULT_TEMPLATE = "previous-default",
     validate = function() return true end,
 }
 package.loaded["adobe.adobe"] = {
@@ -45,6 +46,8 @@ local KOReaderController = require("koreader_controller")
 local function storeWith(value)
     return {
         readSetting = function() return value end,
+        saveSetting = function(self, _, saved) self.saved = saved end,
+        flush = function() end,
     }
 end
 
@@ -62,6 +65,17 @@ local developer = KOReaderController.new{ settings_store = storeWith({ developer
 developer:load()
 developer:fulfill_acsm("book.acsm", "book.epub")
 assert(captured_options.protected_epub == false, "developer mode must save decrypted EPUBs")
+
+local old_store = storeWith({ book_path_template = "previous-default", adobe_registration = { ok = true } })
+local old_default = KOReaderController.new{ settings_store = old_store }
+old_default:load()
+assert(old_default.settings.book_path_template == "{title}", "migration 1 must force the current built-in path template")
+assert(old_default.settings.migration_index == 1, "migration 1 must be marked applied")
+assert(old_store.saved and old_store.saved.migration_index == 1, "migration 1 must persist during startup")
+
+local custom = KOReaderController.new{ settings_store = storeWith({ migration_index = 1, book_path_template = "custom-template", adobe_registration = { ok = true } }) }
+custom:load()
+assert(custom.settings.book_path_template == "custom-template", "an already-migrated custom path must not be reset")
 
 local migrated = KOReaderController.new{ settings_store = storeWith({ cleanup_mode = "dry_run", adobe_registration = { ok = true } }) }
 migrated:load()

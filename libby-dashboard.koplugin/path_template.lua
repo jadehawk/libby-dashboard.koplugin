@@ -1,7 +1,8 @@
 local PathTemplate = {}
 
 PathTemplate.LEGACY_DEFAULT_TEMPLATE = "{home}/{author:first}/{title}.{ext}"
-PathTemplate.DEFAULT_TEMPLATE = "{home}/Libby Books/{author:first}/{series}/{title}.{ext}"
+PathTemplate.PREVIOUS_DEFAULT_TEMPLATE = "{home}/Libby Books/{author:first}/{series}/{title}.{ext}"
+PathTemplate.DEFAULT_TEMPLATE = "{home}/Libby_Loans/{author:first}/{series}/{series_index} - {title}.{ext}"
 
 local function trim(value)
     if type(value) ~= "string" then return nil end
@@ -87,9 +88,27 @@ function PathTemplate.sanitize_component(value, fallback)
     return value
 end
 
+local function format_series_index(value)
+    if type(value) == "string" then value = trim(value) end
+    if value == nil or tostring(value) == "" then return nil end
+    local numeric = tonumber(value)
+    if numeric and numeric >= 0 then
+        return string.format("%05.2f", numeric)
+    end
+    return tostring(value)
+end
+
 function PathTemplate.resolve(template, model, options)
     options = options or {}
     template = trim(template) or PathTemplate.DEFAULT_TEMPLATE
+
+    local series = type(model) == "table" and trim(model.series) or nil
+    local series_index = series and format_series_index(model.series_index) or nil
+    if not series_index then
+        template = template:gsub("{series_index}%s*[-–—]%s*", "")
+        template = template:gsub("%s*[-–—]%s*{series_index}", "")
+    end
+
     local values = {
         home = options.home or ".",
         author = PathTemplate.all_authors(model),
@@ -97,8 +116,8 @@ function PathTemplate.resolve(template, model, options)
         ["author:firstname"] = PathTemplate.author_firstname(model),
         ["author:lastname"] = PathTemplate.author_lastname(model),
         title = type(model) == "table" and model.title or nil,
-        series = type(model) == "table" and model.series or nil,
-        series_index = type(model) == "table" and model.series_index or nil,
+        series = series,
+        series_index = series_index,
         library = type(model) == "table" and model.library or nil,
         ext = options.ext or (type(model) == "table" and model.ext) or "epub",
     }
@@ -106,9 +125,8 @@ function PathTemplate.resolve(template, model, options)
     local resolved = template:gsub("{([^{}]+)}", function(token)
         local value = values[token]
         if value == nil or tostring(value) == "" then
-            if token == "series" then value = "No Series"
-            elseif token == "series_index" then value = "0"
-            else value = "Unknown" end
+            if token == "series" or token == "series_index" then return "" end
+            value = "Unknown"
         end
         if token == "home" then
             return tostring(value):gsub("[\\/]+$", "")

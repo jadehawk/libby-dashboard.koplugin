@@ -139,6 +139,26 @@ function LoanModel.media_type(loan)
     return "ebook"
 end
 
+function LoanModel.non_adobe_format_label(loan)
+    if type(loan) ~= "table" or type(loan.formats) ~= "table" then return nil end
+    local labels, seen = {}, {}
+    local function add(label)
+        if not seen[label] then
+            seen[label] = true
+            table.insert(labels, label)
+        end
+    end
+    for _, format in ipairs(loan.formats) do
+        if type(format) == "table" then
+            local format_id = tostring(format.id or ""):lower()
+            if format_id == "ebook-kindle" then add("Kindle")
+            elseif format_id == "ebook-overdrive" then add("Libby App") end
+        end
+    end
+    if #labels == 0 then return nil end
+    return table.concat(labels, " / ")
+end
+
 function LoanModel.from_loan(loan, cards)
     local series, series_index = LoanModel.series(loan)
     return {
@@ -154,6 +174,7 @@ function LoanModel.from_loan(loan, cards)
         expires_at = LibbyState.loan_expire_timestamp(loan),
         adobe_format = LibbyState.preferred_adobe_format(loan),
         media_type = LoanModel.media_type(loan),
+        non_adobe_format_label = LoanModel.non_adobe_format_label(loan),
         cover_url = LoanModel.cover_url(loan),
         raw = loan,
     }
