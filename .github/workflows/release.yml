@@ -33,17 +33,16 @@ jobs:
             exit 1
           fi
           tag="v${version}"
-          readme_version=$(sed -n 's/^Current plugin version: \*\*\([^*]*\)\*\*$/\1/p' README.md)
-          if [[ "$readme_version" != "$version" ]]; then
-            echo "README version must match _meta.lua; README=$readme_version plugin=$version" >&2
-            exit 1
-          fi
           if [[ "${{ github.event_name }}" == "push" && "${GITHUB_REF_NAME}" != "$tag" ]]; then
             echo "Pushed tag must match plugin version; pushed=${GITHUB_REF_NAME} expected=${tag}" >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Synchronize README version
+        shell: bash
+        run: python .github/scripts/sync_readme_version.py
 
       - name: Install Lua 5.1
         shell: bash

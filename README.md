@@ -2,7 +2,9 @@
 
 Libby Dashboard is a self-contained KOReader plugin for browsing and reading supported loans from libraries linked to a Libby account. It brings the loan shelf directly to the e-reader instead of requiring a separate computer for normal borrowing and fulfillment.
 
-Current plugin version: **0.2.0**
+**Libby Dashboard is a dashboard for loans you have already borrowed. It cannot browse or search your library catalog and cannot borrow new titles. New loans must be borrowed through the official Libby application before they will appear in Libby Dashboard.**
+
+Current plugin version: **0.2.1**
 
 ## Installation
 

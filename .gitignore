@@ -12,3 +12,5 @@
 !/.github/
 !/.github/workflows/
 !/.github/workflows/release.yml
+!/.github/scripts/
+!/.github/scripts/sync_readme_version.py
