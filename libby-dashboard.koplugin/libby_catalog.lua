@@ -162,9 +162,30 @@ local function safeText(value, max_len)
     return text:sub(1, math.max(1, (max_len or 96) - 3)) .. "..."
 end
 
+local function outlinedLabel(text, width, height)
+    local label = TextWidget:new{
+        text = text,
+        face = Font:getFace("cfont", 15),
+        bold = true,
+        fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        max_width = math.max(1, width - 2 * Screen:scaleBySize(10)),
+    }
+    return FrameContainer:new{
+        width = width,
+        height = height,
+        margin = 0,
+        padding = 0,
+        bordersize = Size.border.thin,
+        background = Blitbuffer.COLOR_WHITE,
+        radius = Size.radius.button,
+        CenterContainer:new{ dimen = Geom:new{ w = width, h = height }, label },
+    }
+end
+
 local function mediaLabel(loan)
     if loan.media_type == "audiobook" then return _("Audiobook") end
     if loan.media_type == "magazine" then return _("Magazine") end
+    if loan.media_type == "comic" then return _("Manga/Comic") end
     if loan.adobe_format and loan.adobe_format:find("pdf", 1, true) then return _("PDF") end
     if loan.adobe_format then return _("EPUB") end
     return _("Unsupported")
@@ -427,37 +448,42 @@ function LibbyCatalog:heroWidget(width, height)
     local network_ok = self.network_available_callback == nil or self.network_available_callback()
     if locally_available then
         action_text = _("Open")
-    elseif loan.media_type == "audiobook" then
-        action_text = _("Audiobook — not supported")
-        downloadable = false
-    elseif loan.media_type == "magazine" then
-        action_text = _("Magazine — not supported")
-        downloadable = false
-    elseif not loan.adobe_format then
-        action_text = _("No supported EPUB/PDF format")
+    elseif loan.media_type == "audiobook" or loan.media_type == "magazine" or not loan.adobe_format then
+        action_text = _("Unsupported")
         downloadable = false
     else
         action_text = _("Download")
     end
 
     local action_h = Screen:scaleBySize(34)
-    local action_w = math.min(text_w, Screen:scaleBySize(118))
+    local show_return = self.return_enabled == true
+    local min_gap = Screen:scaleBySize(8)
+    local button_w = show_return
+        and math.max(1, math.floor((text_w - min_gap) / 2))
+        or math.min(text_w, Screen:scaleBySize(150))
     local action
     if locally_available then
-        action = actionButton(action_text, action_w, action_h, true, function()
+        action = actionButton(action_text, button_w, action_h, true, function()
             if self.open_callback then self.open_callback(downloaded_path) end
         end)
     elseif downloadable then
-        action = actionButton(action_text, action_w, action_h, network_ok, function()
+        action = actionButton(action_text, button_w, action_h, network_ok, function()
             if self.download_callback then self.download_callback(loan) end
         end)
     else
-        action = Button:new{
-            text = action_text,
-            enabled = false,
-            text_font_size = 14,
-            max_width = text_w,
-            height = action_h,
+        action = outlinedLabel(action_text, button_w, action_h)
+    end
+
+    local action_row = action
+    if show_return then
+        local return_action = actionButton(_("Return"), button_w, action_h, network_ok, function()
+            if self.return_callback then self.return_callback(loan) end
+        end)
+        action_row = HorizontalGroup:new{
+            align = "center",
+            action,
+            HorizontalSpan:new{ width = math.max(min_gap, text_w - 2 * button_w) },
+            return_action,
         }
     end
     local info = OverlapGroup:new{
@@ -465,7 +491,7 @@ function LibbyCatalog:heroWidget(width, height)
         info_top,
         BottomContainer:new{
             dimen = Geom:new{ w = text_w, h = cover_h },
-            LeftContainer:new{ dimen = Geom:new{ w = text_w, h = action_h }, action },
+            LeftContainer:new{ dimen = Geom:new{ w = text_w, h = action_h }, action_row },
         },
     }
 

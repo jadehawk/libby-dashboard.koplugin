@@ -256,6 +256,27 @@ function LibbyClient:clone_by_blessing(blessing)
     return response.body
 end
 
+function LibbyClient:return_loan(card_id, loan_id)
+    if card_id == nil or tostring(card_id) == "" then return nil, "Loan card id is missing" end
+    if loan_id == nil or tostring(loan_id) == "" then return nil, "Loan id is missing" end
+
+    local path = "/card/" .. tostring(card_id) .. "/loan/" .. tostring(loan_id)
+    local response, err = self:_request("DELETE", path, { identity = self.identity })
+    if not response then return nil, err end
+
+    if response.status == 403 and response_result(response) == "missing_chip" then
+        local refreshed, refresh_err = self:get_chip(true, true)
+        if not refreshed then return nil, refresh_err end
+        response, err = self:_request("DELETE", path, { identity = self.identity })
+        if not response then return nil, err end
+    end
+
+    if response.status < 200 or response.status >= 300 then
+        return nil, "Libby return failed with HTTP " .. tostring(response.status)
+    end
+    return true
+end
+
 function LibbyClient:sync()
     local response, err = self:_request("GET", "/chip/sync", {
         identity = self.identity,
