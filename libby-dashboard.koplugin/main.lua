@@ -1091,6 +1091,14 @@ function LibbyDashboard:refreshBrowserSnapshot(browser)
                 self:prefetchBrowserCovers(browser)
                 DiagnosticLog.log("[refresh] cover-prefetch:end")
                 DiagnosticLog.log("[refresh] complete")
+                if not self._automatic_update_check_done then
+                    self._automatic_update_check_done = true
+                    UIManager:nextTick(function()
+                        if browser == self.catalog_browser and UIManager:isWidgetShown(browser) then
+                            require("libby_dashboard_updater").checkAutomatic(self)
+                        end
+                    end)
+                end
             end)
         end)
     end)
@@ -1143,6 +1151,7 @@ end
 function LibbyDashboard:showBrowser()
     DiagnosticLog.log("[ui] dashboard:open")
     if self.catalog_browser ~= nil then return end
+    self._automatic_update_check_done = false
 
     self.catalog_browser = LibbyCatalog:new{
         snapshot = self.controller:cached_libby_snapshot() or {},
