@@ -153,7 +153,20 @@ function KOReaderController:sync_libby()
     end
     local client, client_err = self:libby_client()
     if not client then return nil, client_err end
-    return client:sync()
+    local state, err = client:sync()
+    if not state then return nil, err end
+    local captured, capture_err = self:save_raw_libby_sync(state)
+    if not captured then return nil, capture_err end
+    return state
+end
+
+function KOReaderController:return_loan(loan)
+    if type(loan) ~= "table" then return nil, "Loan is missing" end
+    if loan.card_id == nil or tostring(loan.card_id) == "" then return nil, "Loan card id is missing" end
+    if loan.id == nil or tostring(loan.id) == "" then return nil, "Loan id is missing" end
+    local client, client_err = self:libby_client()
+    if not client then return nil, client_err end
+    return client:return_loan(loan.card_id, loan.id)
 end
 
 function KOReaderController:download_loan_acsm(loan)
@@ -272,6 +285,52 @@ function KOReaderController:reconcile_downloaded_loans(snapshot, remove_book)
         if not saved then return nil, err end
     end
     return true, removed, candidates
+end
+
+function KOReaderController:raw_libby_sync_dir()
+    return DataStorage:getSettingsDir() .. "/libby-dashboard/debug"
+end
+
+function KOReaderController:save_raw_libby_sync(state)
+    if type(state) ~= "table" then return nil, "Libby sync state is invalid" end
+    local encoded_ok, encoded = pcall(rapidjson.encode, state)
+    if not encoded_ok or type(encoded) ~= "string" then return nil, "Could not encode raw Libby sync payload" end
+
+    local directory = self:raw_libby_sync_dir()
+    if not require("util").makePath(directory) then return nil, "Could not create Libby debug directory: " .. directory end
+
+    local timestamp = os.date("!%Y%m%d-%H%M%S")
+    local archive_path = directory .. "/libby-sync-" .. timestamp .. ".json"
+    local suffix = 2
+    local function file_exists(path)
+        local file = io.open(path, "rb")
+        if not file then return false end
+        file:close()
+        return true
+    end
+    while file_exists(archive_path) do
+        archive_path = directory .. "/libby-sync-" .. timestamp .. "-" .. tostring(suffix) .. ".json"
+        suffix = suffix + 1
+    end
+    local latest_path = directory .. "/libby-sync-latest.json"
+
+    local function write_file(path)
+        local temp_path = path .. ".tmp"
+        local file, file_err = io.open(temp_path, "wb")
+        if not file then return nil, file_err end
+        local ok, write_err = file:write(encoded)
+        file:close()
+        if not ok then os.remove(temp_path); return nil, write_err end
+        os.remove(path)
+        if not os.rename(temp_path, path) then os.remove(temp_path); return nil, "Could not finalize raw Libby sync capture" end
+        return true
+    end
+
+    local archived, archive_err = write_file(archive_path)
+    if not archived then return nil, archive_err end
+    local latest, latest_err = write_file(latest_path)
+    if not latest then return nil, latest_err end
+    return archive_path, latest_path
 end
 
 function KOReaderController:refresh_libby_snapshot()

@@ -37,7 +37,8 @@ local PathTemplate = require("path_template")
 
 local PluginMeta = dofile(plugin_root .. "/_meta.lua")
 local PLUGIN_VERSION = assert(PluginMeta.version, "Missing plugin version in _meta.lua")
-local DEV_OPTIONS_CODE_SHA256 = "5a9797edd88b30dbcd6df95d8605f487d43c15ccd11ebee1aafda677433d4c54"
+local DEV_MODE_ON_SHA256 = "2a3ce23f23f4f9a2f6e1a1b3f7cea2f78a5d815c934fa2c38c645f5fa64a8212"
+local DEV_MODE_OFF_SHA256 = "ac009e462f23deafd26600296e2ee50fe6f640c43d8323fd0bd668914a14df22"
 
 local TopAlignedMultiInputDialog = MultiInputDialog:extend{}
 function TopAlignedMultiInputDialog:init(reinit)
@@ -875,6 +876,34 @@ function LibbyDashboard:scheduleBrowserRefresh(browser)
     UIManager:scheduleIn(300, tick)
 end
 
+function LibbyDashboard:returnLoan(loan)
+    if type(loan) ~= "table" then return end
+    if self.controller.settings.developer_mode == true then
+        UIManager:show(InfoMessage:new{ text = _("Return is disabled while Developer Mode is enabled.") })
+        return
+    end
+    local title = tostring(loan.title or _("this book"))
+    UIManager:show(ConfirmBox:new{
+        text = string.format(_("Return '%s' early?\n\nThis returns the loan to Libby and removes the downloaded book from this device. Reading history will be preserved."), title),
+        ok_text = _("Return"),
+        ok_callback = function()
+            local network_ok = (type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn())
+                and (type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected())
+            if not network_ok then
+                UIManager:show(InfoMessage:new{ text = _("Connect to Wi-Fi before returning a loan.") })
+                return
+            end
+            local ok, err = self.controller:return_loan(loan)
+            if not ok then
+                UIManager:show(InfoMessage:new{ text = _("Could not return loan: ") .. tostring(err or _("unknown error")) })
+                return
+            end
+            if self.catalog_browser then self:refreshBrowserSnapshot(self.catalog_browser) end
+            UIManager:show(InfoMessage:new{ text = _("Loan returned to Libby.") })
+        end,
+    })
+end
+
 function LibbyDashboard:showBrowser()
     if self.catalog_browser ~= nil then return end
 
@@ -885,6 +914,10 @@ function LibbyDashboard:showBrowser()
         download_callback = function(loan)
             self:downloadLoan(loan)
         end,
+        return_callback = function(loan)
+            self:returnLoan(loan)
+        end,
+        return_enabled = self.controller.settings.developer_mode ~= true,
         downloaded_path_callback = function(loan)
             local downloaded = self.controller:downloaded_loan(loan and loan.id)
             local path = type(downloaded) == "table" and downloaded.path or nil
@@ -1088,7 +1121,7 @@ function LibbyDashboard:showLibbySettings()
     dialog = ButtonDialog:new{
         title = _("Libby Setup") .. "\n" .. (authenticated and _("Status: authenticated") or _("Status: not authenticated")),
         buttons = {
-            { { text = authenticated and _("Authenticate another device") or _("Authentication"), callback = function()
+            { { text = authenticated and _("Re-Login/Authenticate") or _("Login/Authenticate"), callback = function()
                 UIManager:close(dialog)
                 self:showLibbySetup()
             end } },
@@ -1327,19 +1360,29 @@ function LibbyDashboard:showCleanupDiagnosticPrompt()
                 { text = _("Apply"), is_enter_default = true, callback = function()
                     local fields = dialog:getFields()
                     local code = koUtil.trim((fields and fields[1]) or "")
-                    if sha2.sha256(code) ~= DEV_OPTIONS_CODE_SHA256 then
+                    local code_hash = sha2.sha256(code)
+                    local enabled
+                    if code_hash == DEV_MODE_ON_SHA256 then
+                        enabled = true
+                    elseif code_hash == DEV_MODE_OFF_SHA256 then
+                        enabled = false
+                    else
                         UIManager:close(dialog)
                         return
                     end
-                    local enabled = self.controller.settings.developer_mode ~= true
                     self.controller.settings.developer_mode = enabled
                     self.controller.settings.cleanup_mode = enabled and "dry_run" or "normal"
                     self.controller:save()
+                    if self.catalog_browser then
+                        self.catalog_browser.return_enabled = not enabled
+                        self.catalog_browser:updateItems()
+                    end
                     UIManager:close(dialog)
                     UIManager:show(InfoMessage:new{
-                        text = enabled
+                        text = (enabled
                             and _("Developer mode enabled. New EPUB downloads will be saved decrypted, and loan cleanup will run in dry-run mode.")
-                            or _("Developer mode disabled. New EPUB downloads will remain DRM-protected, and normal loan cleanup is active."),
+                            or _("Developer mode disabled. New EPUB downloads will remain DRM-protected, and normal loan cleanup is active."))
+                            .. _("\n\nRestart Libby Dashboard to reload the Main UI."),
                     })
                 end },
             },

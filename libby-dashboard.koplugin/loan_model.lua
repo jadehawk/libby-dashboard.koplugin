@@ -112,6 +112,19 @@ end
 
 function LoanModel.media_type(loan)
     if type(loan) ~= "table" then return "ebook" end
+
+    for _, format in ipairs(type(loan.formats) == "table" and loan.formats or {}) do
+        if type(format) == "table" then
+            local format_id = tostring(format.id or ""):lower()
+            local format_name = tostring(format.name or ""):lower()
+            local fulfillment_type = tostring(format.fulfillmentType or ""):lower()
+            local format_text = format_id .. " " .. format_name .. " " .. fulfillment_type
+            if format_text:find("audio", 1, true) then return "audiobook" end
+            if format_text:find("magazine", 1, true) or format_text:find("periodical", 1, true) then return "magazine" end
+            if format_id == "ebook-media-do" or fulfillment_type == "media-do" then return "comic" end
+        end
+    end
+
     local type_info = type(loan.type) == "table" and loan.type or nil
     local value = first_nonempty(
         type_info and type_info.id,
