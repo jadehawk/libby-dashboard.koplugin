@@ -15,8 +15,11 @@ KOReaderController.__index = KOReaderController
 
 KOReaderController.SETTINGS_KEY = "libby_dashboard"
 
+local CURRENT_MIGRATION_INDEX = 1
+
 local DEFAULTS = {
     settings_version = 1,
+    migration_index = CURRENT_MIGRATION_INDEX,
     book_path_template = PathTemplate.DEFAULT_TEMPLATE,
     libby_shelf_columns = 4,
     libby_shelf_rows = 2,
@@ -79,8 +82,17 @@ function KOReaderController:load()
     if type(loaded) == "table" and loaded.developer_mode == nil and self.settings.cleanup_mode == "dry_run" then
         self.settings.developer_mode = true
     end
-    if self.settings.book_path_template == PathTemplate.LEGACY_DEFAULT_TEMPLATE
-            or not PathTemplate.validate(self.settings.book_path_template) then
+
+    local migration_index = CURRENT_MIGRATION_INDEX
+    if type(loaded) == "table" then migration_index = tonumber(loaded.migration_index) or 0 end
+    if migration_index < 1 then
+        self.settings.book_path_template = PathTemplate.DEFAULT_TEMPLATE
+        self.settings.migration_index = 1
+        DiagnosticLog.log("[controller] migration:applied", "index=1 book_path_template")
+        self:save()
+    end
+
+    if not PathTemplate.validate(self.settings.book_path_template) then
         self.settings.book_path_template = PathTemplate.DEFAULT_TEMPLATE
     end
     -- Libby's saved authorization is authoritative once it exists, whether it
@@ -212,6 +224,7 @@ function KOReaderController:normalize_libby_state(state)
             expires_at = loan.expires_at,
             adobe_format = loan.adobe_format,
             media_type = loan.media_type,
+            non_adobe_format_label = loan.non_adobe_format_label,
             cover_url = loan.cover_url,
         })
     end
@@ -304,6 +317,7 @@ function KOReaderController:save_raw_libby_sync(state)
     local directory = self:raw_libby_sync_dir()
     if not require("util").makePath(directory) then return nil, "Could not create Libby debug directory: " .. directory end
 
+    local ok_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
     local timestamp = os.date("!%Y%m%d-%H%M%S")
     local archive_path = directory .. "/libby-sync-" .. timestamp .. ".json"
     local suffix = 2
@@ -313,6 +327,25 @@ function KOReaderController:save_raw_libby_sync(state)
         file:close()
         return true
     end
+    if ok_lfs and lfs and type(lfs.dir) == "function" then
+        local ok_dir, iterator, dir_state = pcall(lfs.dir, directory)
+        if ok_dir and iterator then
+            local highest_suffix = 0
+            for name in iterator, dir_state do
+                if name == "libby-sync-" .. timestamp .. ".json" then
+                    highest_suffix = math.max(highest_suffix, 1)
+                else
+                    local archive_stamp, archive_suffix = name:match("^libby%-sync%-(%d%d%d%d%d%d%d%d%-%d%d%d%d%d%d)%-(%d+)%.json$")
+                    if archive_stamp ~= timestamp then archive_suffix = nil end
+                    if archive_suffix then highest_suffix = math.max(highest_suffix, tonumber(archive_suffix) or 0) end
+                end
+            end
+            if highest_suffix > 0 then
+                archive_path = directory .. "/libby-sync-" .. timestamp .. "-" .. tostring(highest_suffix + 1) .. ".json"
+            end
+        end
+    end
+
     while file_exists(archive_path) do
         archive_path = directory .. "/libby-sync-" .. timestamp .. "-" .. tostring(suffix) .. ".json"
         suffix = suffix + 1
@@ -335,6 +368,36 @@ function KOReaderController:save_raw_libby_sync(state)
     if not archived then return nil, archive_err end
     local latest, latest_err = write_file(latest_path)
     if not latest then return nil, latest_err end
+    if ok_lfs and lfs and type(lfs.dir) == "function" then
+        local ok_dir, iterator, dir_state = pcall(lfs.dir, directory)
+        if ok_dir and iterator then
+            local archives = {}
+            for name in iterator, dir_state do
+                if name ~= "." and name ~= ".." and name ~= "libby-sync-latest.json" then
+                    local stamp, archive_suffix = name:match("^libby%-sync%-(%d%d%d%d%d%d%d%d%-%d%d%d%d%d%d)%-(%d+)%.json$")
+                    if not stamp then
+                        stamp = name:match("^libby%-sync%-(%d%d%d%d%d%d%d%d%-%d%d%d%d%d%d)%.json$")
+                        archive_suffix = stamp and "1" or nil
+                    end
+                    if stamp then
+                        table.insert(archives, {
+                            name = name,
+                            stamp = stamp,
+                            suffix = tonumber(archive_suffix) or 1,
+                        })
+                    end
+                end
+            end
+            table.sort(archives, function(a, b)
+                if a.stamp ~= b.stamp then return a.stamp > b.stamp end
+                return a.suffix > b.suffix
+            end)
+            for index = 4, #archives do
+                os.remove(directory .. "/" .. archives[index].name)
+            end
+        end
+    end
+
     return archive_path, latest_path
 end
 

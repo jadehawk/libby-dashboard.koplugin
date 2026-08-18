@@ -653,7 +653,7 @@ function LibbyDashboard:showLoanDetails(loan)
         local suffix = loan.days_remaining == 1 and _(" day remaining") or _(" days remaining")
         table.insert(lines, _("Loan: ") .. tostring(loan.days_remaining) .. suffix)
     end
-    table.insert(lines, _("Format: ") .. tostring(loan.adobe_format or loan.media_type or _("Unsupported")))
+    table.insert(lines, _("Format: ") .. tostring(loan.adobe_format or loan.non_adobe_format_label or loan.media_type or _("Unsupported")))
     local dialog
     local buttons = {}
     local downloaded = self.controller:downloaded_loan(loan.id)
@@ -964,7 +964,7 @@ function LibbyDashboard:showBookStorageSettings()
         title = _("Book Storage") .. "\n" .. current .. "\n\n" .. _("Example:") .. "\n" .. self:storagePreview(current),
         buttons = {
             preset(_("Author / Title"), "{home}/{author:first}/{title}.{ext}"),
-            preset(_("Author / Series / Title"), "{home}/{author:first}/{series}/{title}.{ext}"),
+            preset(_("Author / Series / Title"), PathTemplate.DEFAULT_TEMPLATE),
             preset(_("Library / Author / Title"), "{home}/{library}/{author:first}/{title}.{ext}"),
             preset(_("All books in Home"), "{home}/{title}.{ext}"),
             { { text = _("Custom template…"), callback = function() UIManager:close(dialog); self:showCustomBookStorage() end } },
