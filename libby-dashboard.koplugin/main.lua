@@ -35,6 +35,8 @@ local KOReaderController = require("koreader_controller")
 local KOReaderTransport = require("koreader_transport")
 local LibbyCatalog = require("libby_catalog")
 local LoanModel = require("loan_model")
+local NetworkAction = require("network_action")
+local RefreshWatchdog = require("refresh_watchdog")
 local PathTemplate = require("path_template")
 
 local PluginMeta = dofile(plugin_root .. "/_meta.lua")
@@ -84,6 +86,10 @@ local LibbyDashboard = WidgetContainer:extend{
 
 LibbyDashboard.PLUGIN_VERSION = PLUGIN_VERSION
 
+function LibbyDashboard:runNetworkAction(callback, require_online)
+    return NetworkAction.run(self, NetworkMgr, UIManager, callback, require_online)
+end
+
 local function truncateUtf8Bytes(text, max_bytes)
     if #text <= max_bytes then return text end
     local cut = math.max(0, max_bytes)
@@ -130,6 +136,8 @@ function LibbyDashboard:init()
 end
 
 function LibbyDashboard:closeCatalogBrowser(full_refresh)
+    NetworkAction.release(self, NetworkMgr, UIManager)
+    RefreshWatchdog.cancel(self, UIManager)
     if self.catalog_refresh_tick then
         UIManager:unschedule(self.catalog_refresh_tick)
         self.catalog_refresh_tick = nil
@@ -245,7 +253,8 @@ end
 
 function LibbyDashboard:fulfillExternalAcsm(file, EpubMetadata, acsmMetadata, approvedTarget)
     DiagnosticLog.log("[acsm] fulfillment:start")
-    Trapper:wrap(function()
+    self:runNetworkAction(function()
+        Trapper:wrap(function()
         Trapper:info(_("Downloading book..."), false, true)
         local replacementTarget
         local stagingPath
@@ -311,6 +320,7 @@ function LibbyDashboard:fulfillExternalAcsm(file, EpubMetadata, acsmMetadata, ap
         end
 
         self:finishExternalAcsm(file, result.outputPath)
+        end)
     end)
 end
 
@@ -318,9 +328,8 @@ function LibbyDashboard:openFile(file)
     DiagnosticLog.log("[acsm] open:start", tostring(file or ""))
     if not self:isFileTypeSupported(file) then return end
 
-    if NetworkMgr:willRerunWhenOnline(function() self:openFile(file) end) then return end
-
-    Trapper:wrap(function()
+    self:runNetworkAction(function()
+        Trapper:wrap(function()
         Trapper:info(_("Preparing ACSM..."), false, true)
         local registration, registration_err = self.controller:ensure_adobe_registration()
         if not registration then
@@ -364,11 +373,13 @@ function LibbyDashboard:openFile(file)
         if ExternalAcsm.pathOccupied(preflightPath) then
             self:showExternalAcsmOverwrite(
                 preflightPath,
-                function() startFulfillment(preflightPath) end
+                function() startFulfillment(preflightPath) end,
+                function() end
             )
             return
         end
         startFulfillment(nil)
+        end)
     end)
 end
 
@@ -398,7 +409,7 @@ function LibbyDashboard:showPending(feature)
 end
 
 function LibbyDashboard:showLibraryCards()
-    NetworkMgr:runWhenOnline(function()
+    self:runNetworkAction(function()
         local state, err = self.controller:sync_libby()
         if not state then
             UIManager:show(InfoMessage:new{ text = _("Could not load library cards:") .. "\n\n" .. tostring(err) })
@@ -575,14 +586,9 @@ function LibbyDashboard:downloadLoan(loan)
         return
     end
 
-    local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
-    local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
-    if not (wifi_on and connected) then
-        UIManager:show(InfoMessage:new{ text = _("Wi-Fi is not available. Connect to Wi-Fi and try again.") })
-        return
-    end
 
-    Trapper:wrap(function()
+    self:runNetworkAction(function()
+        Trapper:wrap(function()
         Trapper:info(_("Fetching book from Libby…\n\nPlease stand by."), false, true)
         local acsm, err = self.controller:download_loan_acsm(loan)
         if not acsm then
@@ -637,6 +643,7 @@ function LibbyDashboard:downloadLoan(loan)
             self.catalog_browser:updateItems()
         end
         UIManager:show(InfoMessage:new{ text = _("Book downloaded successfully:") .. "\n\n" .. tostring(downloaded_path) })
+        end)
     end)
 end
 
@@ -677,7 +684,7 @@ function LibbyDashboard:showLoanDetails(loan)
 end
 
 function LibbyDashboard:showLoans()
-    NetworkMgr:runWhenOnline(function()
+    self:runNetworkAction(function()
         local state, err = self.controller:sync_libby()
         if not state then
             UIManager:show(InfoMessage:new{ text = _("Could not load loans:") .. "\n\n" .. tostring(err) })
@@ -692,7 +699,7 @@ function LibbyDashboard:showLoans()
 end
 
 function LibbyDashboard:testConnection()
-    NetworkMgr:runWhenOnline(function()
+    self:runNetworkAction(function()
         local ok, err = self.controller:test_libby_connection()
         UIManager:show(InfoMessage:new{
             text = ok and _("Libby connection successful. KOReader reached the Libby service and received a valid chip response.")
@@ -711,18 +718,14 @@ function LibbyDashboard:showLibbySetup()
 end
 
 function LibbyDashboard:generateLibbySetupCode()
-    local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
-    local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
-    if not (wifi_on and connected) then
-        UIManager:show(InfoMessage:new{ text = _("Wi-Fi is required to generate a Libby setup code. Connect to Wi-Fi and try again.") })
-        return
-    end
-    local setup, err = self.controller:begin_libby_setup()
+    self:runNetworkAction(function()
+        local setup, err = self.controller:begin_libby_setup()
     if not setup then
         UIManager:show(InfoMessage:new{ text = _("Could not generate Libby setup code:") .. string.char(10, 10) .. tostring(err) })
         return
     end
-    self:showLibbySetupCountdown()
+        self:showLibbySetupCountdown()
+    end)
 end
 
 function LibbyDashboard:showLibbySetupCountdown()
@@ -784,7 +787,7 @@ function LibbyDashboard:showLibbySetupCountdown()
 end
 
 function LibbyDashboard:verifyLibbySetupCode()
-    NetworkMgr:runWhenOnline(function()
+    self:runNetworkAction(function()
         local waiting_message = InfoMessage:new{ text = _("Awaiting Libby verification...") }
         UIManager:show(waiting_message)
         UIManager:forceRePaint()
@@ -858,7 +861,10 @@ function LibbyDashboard:prefetchBrowserCovers(browser)
     end
     if #missing == 0 then return end
 
-    NetworkMgr:runWhenConnected(function()
+    local online = type(NetworkMgr.isOnline) ~= "function" or NetworkMgr:isOnline()
+    if not online then return end
+
+    self:runNetworkAction(function()
         Trapper:wrap(function()
             local completed = Trapper:dismissableRunInSubprocess(function()
                 local dir = self:coverCacheDir()
@@ -976,24 +982,31 @@ end
 
 function LibbyDashboard:refreshBrowserSnapshot(browser)
     DiagnosticLog.log("[refresh] request")
-    local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
-    local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
-    DiagnosticLog.log("[refresh] network-state", "wifi=" .. tostring(wifi_on) .. " connected=" .. tostring(connected))
-    if not (wifi_on and connected) then
-        DiagnosticLog.log("[refresh] blocked-offline")
-        UIManager:show(InfoMessage:new{
-            text = _("Wi-Fi is not available. Connect to Wi-Fi and try again."),
-        })
-        return false
-    end
-
     browser.refresh_state = "refreshing"
     DiagnosticLog.log("[refresh] ui:update-refreshing:start")
     browser:updateItems()
     DiagnosticLog.log("[refresh] ui:update-refreshing:end")
 
+    local network_entered = false
+    local network_watchdog
+    network_watchdog = function()
+        if network_entered then return end
+        DiagnosticLog.log("[refresh] network-timeout", "online=" .. tostring(NetworkMgr:isOnline()))
+        if not UIManager:isWidgetShown(browser) then return end
+        browser.refresh_state = "failed"
+        browser:updateItems()
+        UIManager:show(InfoMessage:new{
+            text = _("No online connection found.") .. string.char(10, 10)
+                .. _("Refresh timed out; showing cached library data."),
+            timeout = 5,
+        })
+    end
+    local watchdog_token = RefreshWatchdog.arm(self, UIManager, network_watchdog)
+
     DiagnosticLog.log("[refresh] runWhenConnected:schedule")
-    NetworkMgr:runWhenConnected(function()
+    self:runNetworkAction(function()
+        network_entered = true
+        RefreshWatchdog.cancel(self, UIManager, watchdog_token)
         DiagnosticLog.log("[refresh] runWhenConnected:entered")
         Trapper:wrap(function()
             DiagnosticLog.log("[refresh] subprocess:start")
@@ -1091,9 +1104,8 @@ function LibbyDashboard:scheduleBrowserRefresh(browser)
             if self.catalog_refresh_tick == tick then self.catalog_refresh_tick = nil end
             return
         end
-        local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
-        local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
-        if wifi_on and connected and self.controller:libby_authenticated()
+        local online = type(NetworkMgr.isOnline) ~= "function" or NetworkMgr:isOnline()
+        if online and self.controller:libby_authenticated()
                 and browser.refresh_state ~= "refreshing" then
             self:refreshBrowserSnapshot(browser)
         end
@@ -1115,12 +1127,7 @@ function LibbyDashboard:returnLoan(loan)
         text = string.format(_("Return '%s' early?\n\nThis returns the loan to Libby and removes the downloaded book from this device. Reading history will be preserved."), title),
         ok_text = _("Return"),
         ok_callback = function()
-            local network_ok = (type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn())
-                and (type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected())
-            if not network_ok then
-                UIManager:show(InfoMessage:new{ text = _("Connect to Wi-Fi before returning a loan.") })
-                return
-            end
+            self:runNetworkAction(function()
             local ok, err = self.controller:return_loan(loan)
             if not ok then
                 UIManager:show(InfoMessage:new{ text = _("Could not return loan: ") .. tostring(err or _("unknown error")) })
@@ -1128,6 +1135,7 @@ function LibbyDashboard:returnLoan(loan)
             end
             if self.catalog_browser then self:refreshBrowserSnapshot(self.catalog_browser) end
             UIManager:show(InfoMessage:new{ text = _("Loan returned to Libby.") })
+            end)
         end,
     })
 end
@@ -1159,9 +1167,7 @@ function LibbyDashboard:showBrowser()
             end
         end,
         network_available_callback = function()
-            local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
-            local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
-            return wifi_on and connected
+            return true
         end,
         cover_path_callback = function(loan)
             return self:coverCachePath(loan)
@@ -1181,21 +1187,14 @@ function LibbyDashboard:showBrowser()
     }
     UIManager:show(self.catalog_browser)
     self:scheduleBrowserRefresh(self.catalog_browser)
-    self:prefetchBrowserCovers(self.catalog_browser)
-
-    local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
-    local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
-    if wifi_on and connected and self.controller:libby_authenticated() then
-        self:refreshBrowserSnapshot(self.catalog_browser)
-    end
-
-    if not self.controller:adobe_registered() then
-        NetworkMgr:runWhenConnected(function()
-            if not self.controller:adobe_registered() then
-                self.controller:ensure_adobe_registration()
-            end
-        end)
-    end
+    self:runNetworkAction(function()
+        if self.controller:libby_authenticated() then
+            self:refreshBrowserSnapshot(self.catalog_browser)
+        end
+        if not self.controller:adobe_registered() then
+            self.controller:ensure_adobe_registration()
+        end
+    end)
 end
 
 function LibbyDashboard:showAuthenticationSettings()
@@ -1380,7 +1379,7 @@ function LibbyDashboard:showLibbySettings()
 end
 
 function LibbyDashboard:showByteBooksLogin()
-    NetworkMgr:runWhenConnected(function()
+    self:runNetworkAction(function()
         local methods, methods_err = self.controller:adobe_sign_in_methods()
         if not methods then
             UIManager:show(InfoMessage:new{
@@ -1438,7 +1437,8 @@ function LibbyDashboard:showByteBooksLogin()
                                 return
                             end
                             UIManager:close(dialog)
-                            local signing_in_message = InfoMessage:new{ text = _("Signing in to ByteBooks...") }
+                            self:runNetworkAction(function()
+                                local signing_in_message = InfoMessage:new{ text = _("Signing in to ByteBooks...") }
                             UIManager:show(signing_in_message)
                             UIManager:forceRePaint()
                             local registered, err = self.controller:create_adobe_account_registration(email, password, named_method)
@@ -1452,7 +1452,8 @@ function LibbyDashboard:showByteBooksLogin()
                                         .. "\n" .. _("ADEPT user:") .. " " .. tostring(registered.user or "")
                                         .. "\n\n" .. _("Create an Account Backup now so this authorization can be restored without registering another device."))
                                     or (_("ByteBooks sign-in failed:") .. "\n\n" .. tostring(err)),
-                            })
+                                })
+                            end)
                         end,
                     },
                 },
@@ -1479,26 +1480,16 @@ function LibbyDashboard:showAdobeSettings()
         title = _("ByteBooks / Adobe Authorization") .. "\n" .. status_text,
         buttons = {
             { { text = _("Register device (anonymous)"), callback = function()
-                local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
-                local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
-                if not (wifi_on and connected) then
-                    UIManager:show(InfoMessage:new{ text = _("Wi-Fi is required to register this device. Connect to Wi-Fi and try again.") })
-                    return
-                end
                 UIManager:close(dialog)
-                local registered, err = self.controller:create_adobe_registration()
-                UIManager:show(InfoMessage:new{
-                    text = registered and _("Anonymous Adobe registration created successfully.")
-                        or (_("Could not create Adobe registration:") .. string.char(10, 10) .. tostring(err)),
-                })
+                self:runNetworkAction(function()
+                    local registered, err = self.controller:create_adobe_registration()
+                    UIManager:show(InfoMessage:new{
+                        text = registered and _("Anonymous Adobe registration created successfully.")
+                            or (_("Could not create Adobe registration:") .. string.char(10, 10) .. tostring(err)),
+                    })
+                end)
             end } },
             { { text = _("Sign in with ByteBooks account"), callback = function()
-                local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
-                local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
-                if not (wifi_on and connected) then
-                    UIManager:show(InfoMessage:new{ text = _("Wi-Fi is required to sign in with ByteBooks. Connect to Wi-Fi and try again.") })
-                    return
-                end
                 UIManager:close(dialog)
                 self:showByteBooksLogin()
             end } },

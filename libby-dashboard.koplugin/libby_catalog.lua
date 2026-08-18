@@ -15,6 +15,7 @@ local ImageWidget = require("ui/widget/imagewidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
+local NetworkMgr = require("ui/network/manager")
 local RenderImage = require("ui/renderimage")
 local Size = require("ui/size")
 local TextBoxWidget = require("ui/widget/textboxwidget")
@@ -25,6 +26,9 @@ local VerticalSpan = require("ui/widget/verticalspan")
 local _ = require("gettext")
 
 local Screen = Device.screen
+local source_path = debug.getinfo(1, "S").source:gsub("^@", "")
+local plugin_root = source_path:match("^(.*)[/\\]libby_catalog%.lua$")
+local GLOBE_ICON_PATH = plugin_root and (plugin_root .. "/dependencies/icons/globe.svg") or nil
 
 local LibbyCatalog = InputContainer:extend{
     name = "libby_catalog",
@@ -108,6 +112,26 @@ local function iconTap(icon, width, height, callback, icon_size, tap_extend_left
         return true
     end
     return item
+end
+
+local function wifiStatusWidget(width, height)
+    local online = type(NetworkMgr.isOnline) ~= "function" or NetworkMgr:isOnline()
+
+    local label = online and _("ONLINE") or _("OFFLINE")
+    local icon_size = math.min(Screen:scaleBySize(24), math.max(1, height - Screen:scaleBySize(14)))
+    local group = HorizontalGroup:new{ align = "center" }
+    if GLOBE_ICON_PATH then
+        table.insert(group, IconWidget:new{ file = GLOBE_ICON_PATH, width = icon_size, height = icon_size })
+    else
+        table.insert(group, IconWidget:new{ icon = "wifi", width = icon_size, height = icon_size })
+    end
+    table.insert(group, HorizontalSpan:new{ width = Screen:scaleBySize(3) })
+    table.insert(group, TextWidget:new{
+        text = label,
+        face = Font:getFace("cfont", 11),
+        bold = online,
+    })
+    return CenterContainer:new{ dimen = Geom:new{ w = width, h = height }, group }
 end
 
 local function hamburgerTap(width, height, callback)
@@ -512,7 +536,8 @@ end
 
 function LibbyCatalog:headerWidget(width, height)
     local button_w = height
-    local middle_w = math.max(1, width - 2 * button_w)
+    local wifi_w = Screen:scaleBySize(78)
+    local middle_w = math.max(1, width - 2 * button_w - wifi_w)
     local chrome_icon = math.min(Screen:scaleBySize(32), math.max(1, height - Screen:scaleBySize(8)))
     local refresh_icon = math.min(Screen:scaleBySize(26), math.max(1, height - Screen:scaleBySize(12)))
     local row = HorizontalGroup:new{ align = "center" }
@@ -532,6 +557,7 @@ function LibbyCatalog:headerWidget(width, height)
         if self.refresh_state ~= "refreshing" and self.refresh_callback then self.refresh_callback() end
     end, refresh_icon))
     table.insert(row, CenterContainer:new{ dimen = Geom:new{ w = middle_w, h = height }, center })
+    table.insert(row, wifiStatusWidget(wifi_w, height))
     table.insert(row, iconTap("close", button_w, height, function()
         if self.close_callback then self.close_callback() else UIManager:close(self) end
     end, chrome_icon))
@@ -750,6 +776,14 @@ function LibbyCatalog:refreshSnapshot(snapshot, state)
     self.selected_loan_id = nil
     self:updateItems()
     DiagnosticLog.log("[catalog] refreshSnapshot:end")
+end
+
+function LibbyCatalog:onNetworkConnected()
+    self:updateItems()
+end
+
+function LibbyCatalog:onNetworkDisconnected()
+    self:updateItems()
 end
 
 function LibbyCatalog:onLeftButtonTap()
