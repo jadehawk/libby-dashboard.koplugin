@@ -29,6 +29,8 @@ local koUtil = require("util")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local _ = require("gettext")
 
+local DiagnosticLog = require("diagnostic_log")
+local ExternalAcsm = require("external_acsm")
 local KOReaderController = require("koreader_controller")
 local KOReaderTransport = require("koreader_transport")
 local LibbyCatalog = require("libby_catalog")
@@ -102,6 +104,8 @@ local function safeDisplayText(value, max_bytes)
 end
 
 function LibbyDashboard:init()
+    DiagnosticLog.init()
+    DiagnosticLog.log("[plugin] init:start", "version=" .. tostring(PLUGIN_VERSION))
     local settings_dir = DataStorage:getSettingsDir() .. "/libby-dashboard"
     koUtil.makePath(settings_dir)
     self.settings_file = settings_dir .. "/libby-dashboard.lua"
@@ -112,13 +116,17 @@ function LibbyDashboard:init()
         device = Device,
     }
     self.controller:load()
+    DiagnosticLog.log("[plugin] controller:loaded")
     local CreDocument = require("document/credocument")
     local ProtectedEpub = require("protected_epub")
     ProtectedEpub.install(CreDocument, function()
         return self.controller.settings
     end)
+    DiagnosticLog.log("[plugin] protected-epub:installed")
     self:registerAcsmProvider()
+    DiagnosticLog.log("[plugin] acsm-provider:registered")
     self.ui.menu:registerToMainMenu(self)
+    DiagnosticLog.log("[plugin] init:complete")
 end
 
 function LibbyDashboard:closeCatalogBrowser(full_refresh)
@@ -183,7 +191,7 @@ function LibbyDashboard:isFileTypeSupported(file)
     return type(file) == "string" and koUtil.getFileNameSuffix(file):lower() == "acsm"
 end
 
-function LibbyDashboard:externalAcsmOutputPath(file, model, extension)
+function LibbyDashboard:externalAcsmDestination(file, model, extension)
     model = type(model) == "table" and model or {}
     extension = extension or "epub"
 
@@ -198,23 +206,116 @@ function LibbyDashboard:externalAcsmOutputPath(file, model, extension)
     if parent and parent ~= "" and not koUtil.makePath(parent) then
         return nil, "Could not create destination folder: " .. tostring(parent)
     end
+    return desired
+end
 
-    local function available(path)
-        return not koUtil.pathExists(path) and not koUtil.pathExists(path .. ".lic") and not koUtil.pathExists(path .. ".rights")
-    end
-    if available(desired) then return desired end
+function LibbyDashboard:showExternalAcsmOverwrite(target, overwrite_callback, cancel_callback)
+    DiagnosticLog.log("[acsm] overwrite-prompt", tostring(target or ""))
+    UIManager:show(ConfirmBox:new{
+        text = _("Book already found at:") .. "\n\n" .. tostring(target),
+        cancel_text = _("Cancel"),
+        ok_text = _("Overwrite"),
+        cancel_callback = cancel_callback,
+        ok_callback = overwrite_callback,
+    })
+end
 
-    local stem, ext = desired:match("^(.*)(%.[^./]+)$")
-    stem = stem or desired
-    ext = ext or ("." .. extension)
-    for index = 1, 999 do
-        local candidate = stem .. " (" .. tostring(index) .. ")" .. ext
-        if available(candidate) then return candidate end
+function LibbyDashboard:finishExternalAcsm(file, outputPath)
+    DiagnosticLog.log("[acsm] fulfillment-success", tostring(outputPath or ""))
+    local removed, removeErr = os.remove(file)
+    if not removed and koUtil.pathExists(file) then
+        Trapper:reset()
+        UIManager:show(InfoMessage:new{
+            text = _("Book downloaded successfully, but the source ACSM could not be deleted:")
+                .. "\n\n" .. tostring(file) .. "\n\n" .. tostring(removeErr or "unknown error"),
+        })
+        return
     end
-    return nil, "Could not find an unused destination filename"
+
+    if self.ui and self.ui.file_chooser then self.ui.file_chooser:refreshPath() end
+    Trapper:clear()
+    if self.ui and type(self.ui.openFile) == "function" then
+        UIManager:nextTick(function() self.ui:openFile(outputPath) end)
+    else
+        UIManager:show(InfoMessage:new{
+            text = _("Book downloaded successfully:") .. "\n\n" .. tostring(outputPath),
+        })
+    end
+end
+
+function LibbyDashboard:fulfillExternalAcsm(file, EpubMetadata, acsmMetadata, approvedTarget)
+    DiagnosticLog.log("[acsm] fulfillment:start")
+    Trapper:wrap(function()
+        Trapper:info(_("Downloading book..."), false, true)
+        local replacementTarget
+        local stagingPath
+        local requireFinalConfirmation = false
+
+        local result, fulfill_err = self.controller:fulfill_acsm(file, nil, {
+            resolve_output_path = function(downloadedPath, format)
+                local downloadedMetadata = {}
+                if format and format.is_epub then
+                    downloadedMetadata = EpubMetadata.fromEpub(downloadedPath) or {}
+                end
+                local model = EpubMetadata.merge(downloadedMetadata, acsmMetadata)
+                local desired, destinationErr = self:externalAcsmDestination(
+                    file, model, format and format.extension or "epub"
+                )
+                if not desired then return nil, destinationErr end
+
+                if ExternalAcsm.pathOccupied(desired) then
+                    replacementTarget = desired
+                    stagingPath, destinationErr = ExternalAcsm.stagingPath(desired)
+                    if not stagingPath then return nil, destinationErr end
+                    requireFinalConfirmation = approvedTarget ~= desired
+                    return stagingPath
+                end
+                return desired
+            end,
+        })
+
+        if not result then
+            if stagingPath then ExternalAcsm.cleanup(stagingPath) end
+            Trapper:reset()
+            UIManager:show(InfoMessage:new{
+                text = _("ACSM processing failed:") .. "\n\n" .. tostring(fulfill_err),
+            })
+            return
+        end
+
+        local function finalizeReplacement()
+            local installed, replaceErr = ExternalAcsm.replace(stagingPath, replacementTarget)
+            if not installed then
+                ExternalAcsm.cleanup(stagingPath)
+                Trapper:reset()
+                UIManager:show(InfoMessage:new{
+                    text = _("Could not overwrite existing book:") .. "\n\n" .. tostring(replaceErr),
+                })
+                return
+            end
+            self:finishExternalAcsm(file, installed)
+        end
+
+        if replacementTarget then
+            if requireFinalConfirmation then
+                Trapper:reset()
+                self:showExternalAcsmOverwrite(
+                    replacementTarget,
+                    finalizeReplacement,
+                    function() ExternalAcsm.cleanup(stagingPath) end
+                )
+                return
+            end
+            finalizeReplacement()
+            return
+        end
+
+        self:finishExternalAcsm(file, result.outputPath)
+    end)
 end
 
 function LibbyDashboard:openFile(file)
+    DiagnosticLog.log("[acsm] open:start", tostring(file or ""))
     if not self:isFileTypeSupported(file) then return end
 
     if NetworkMgr:willRerunWhenOnline(function() self:openFile(file) end) then return end
@@ -244,34 +345,30 @@ function LibbyDashboard:openFile(file)
             }
         end
         local acsmMetadata = EpubMetadata.fromAcsm(file) or {}
-        Trapper:info(_("Downloading book..."), false, true)
-        local result, fulfill_err = self.controller:fulfill_acsm(file, nil, {
-            resolve_output_path = function(downloadedPath, format)
-                local downloadedMetadata = {}
-                if format and format.is_epub then
-                    downloadedMetadata = EpubMetadata.fromEpub(downloadedPath) or {}
-                end
-                local model = EpubMetadata.merge(downloadedMetadata, acsmMetadata)
-                return self:externalAcsmOutputPath(file, model, format and format.extension or "epub")
-            end,
-        })
-        if not result then
+        local preflightPath, destinationErr = self:externalAcsmDestination(file, acsmMetadata, "epub")
+        if not preflightPath then
             Trapper:reset()
             UIManager:show(InfoMessage:new{
-                text = _("ACSM processing failed:") .. "\n\n" .. tostring(fulfill_err),
+                text = _("Could not determine book destination:") .. "\n\n" .. tostring(destinationErr),
             })
             return
         end
 
-        if self.ui.file_chooser then self.ui.file_chooser:refreshPath() end
-        Trapper:clear()
-        if self.ui and type(self.ui.openFile) == "function" then
-            UIManager:nextTick(function() self.ui:openFile(result.outputPath or output) end)
-        else
-            UIManager:show(InfoMessage:new{
-                text = _("Book downloaded successfully:") .. "\n\n" .. tostring(result.outputPath or output),
-            })
+        local function startFulfillment(approvedTarget)
+            UIManager:nextTick(function()
+                self:fulfillExternalAcsm(file, EpubMetadata, acsmMetadata, approvedTarget)
+            end)
         end
+
+        Trapper:clear()
+        if ExternalAcsm.pathOccupied(preflightPath) then
+            self:showExternalAcsmOverwrite(
+                preflightPath,
+                function() startFulfillment(preflightPath) end
+            )
+            return
+        end
+        startFulfillment(nil)
     end)
 end
 
@@ -367,34 +464,108 @@ function LibbyDashboard:restoreReadingHistory(loan, path)
 end
 
 function LibbyDashboard:pruneEmptyBookFolders(path)
-    local root = self.controller.reader_settings:readSetting("home_dir")
-    local dir = util.dirname(path)
-    while dir and dir ~= "" and dir ~= root and dir:sub(1, #root + 1) == root .. "/" do
-        local empty = true
-        for name in lfs.dir(dir) do
-            if name ~= "." and name ~= ".." then empty = false break end
-        end
-        if not empty or not lfs.rmdir(dir) then break end
-        dir = util.dirname(dir)
+    DiagnosticLog.log("[cleanup] prune:root:start")
+    local home = self.controller.reader_settings:readSetting("home_dir")
+    local root = home
+    if type(home) == "string" and home ~= "" and type(path) == "string"
+        and path:sub(1, #home + 1) == home .. "/" then
+        local relative = path:sub(#home + 2)
+        local top_level = relative:match("^([^/]+)")
+        if top_level and top_level ~= "" then root = home .. "/" .. top_level end
     end
+    DiagnosticLog.log("[cleanup] prune:root:end", tostring(root or ""))
+
+    DiagnosticLog.log("[cleanup] prune:dirname:start", tostring(path or ""))
+    local dir = util.dirname(path)
+    DiagnosticLog.log("[cleanup] prune:dirname:end", tostring(dir or ""))
+
+    while dir and dir ~= "" and dir ~= root and dir:sub(1, #root + 1) == root .. "/" do
+        DiagnosticLog.log("[cleanup] prune:dir:start", dir)
+        local empty = true
+        DiagnosticLog.log("[cleanup] prune:attributes:start", dir)
+        local dir_attr = lfs.attributes(dir)
+        DiagnosticLog.log("[cleanup] prune:attributes:end", "exists=" .. tostring(dir_attr ~= nil) .. " mode=" .. tostring(dir_attr and dir_attr.mode or ""))
+        if not dir_attr or dir_attr.mode ~= "directory" then
+            DiagnosticLog.log("[cleanup] prune:stop-missing", dir)
+            break
+        end
+        DiagnosticLog.log("[cleanup] prune:lfs-dir:start", dir)
+        local iterator, dir_obj = lfs.dir(dir)
+        DiagnosticLog.log("[cleanup] prune:lfs-dir:end", "iterator=" .. tostring(iterator ~= nil))
+        if iterator then
+            for name in iterator, dir_obj do
+                DiagnosticLog.log("[cleanup] prune:entry", tostring(name))
+                if name ~= "." and name ~= ".." then empty = false break end
+            end
+        end
+        DiagnosticLog.log("[cleanup] prune:scan:end", "empty=" .. tostring(empty))
+        if not empty then
+            DiagnosticLog.log("[cleanup] prune:stop-not-empty", dir)
+            break
+        end
+
+        DiagnosticLog.log("[cleanup] prune:rmdir:start", dir)
+        local removed, remove_err = lfs.rmdir(dir)
+        DiagnosticLog.log("[cleanup] prune:rmdir:end", "ok=" .. tostring(removed ~= nil) .. " error=" .. tostring(remove_err or ""))
+        if not removed then break end
+
+        DiagnosticLog.log("[cleanup] prune:parent:start", dir)
+        dir = util.dirname(dir)
+        DiagnosticLog.log("[cleanup] prune:parent:end", tostring(dir or ""))
+    end
+    DiagnosticLog.log("[cleanup] prune:end")
 end
 
 function LibbyDashboard:removeTrackedBook(record)
+    DiagnosticLog.log("[cleanup] removeTrackedBook:start", "record_type=" .. type(record))
     local path = type(record) == "table" and record.path or record
-    if type(path) ~= "string" or path == "" then return end
-    local loan_id = type(record) == "table" and record.loan_id or nil
-    local sidecar = DocSettings:getSidecarDir(path)
-    local history = self:historySidecarPath(loan_id)
-    if history and lfs.attributes(sidecar) then
-        koUtil.makePath(self:historyDir())
-        if not moveTree(sidecar, history) then return false end
+    DiagnosticLog.log("[cleanup] path:resolved", tostring(path or ""))
+    if type(path) ~= "string" or path == "" then
+        DiagnosticLog.log("[cleanup] path:invalid")
+        return
     end
-    os.remove(path)
+
+    local loan_id = type(record) == "table" and record.loan_id or nil
+    DiagnosticLog.log("[cleanup] loan-id:resolved", tostring(loan_id or ""))
+
+    DiagnosticLog.log("[cleanup] sidecar:get:start", path)
+    local sidecar = DocSettings:getSidecarDir(path)
+    DiagnosticLog.log("[cleanup] sidecar:get:end", tostring(sidecar or ""))
+
+    DiagnosticLog.log("[cleanup] history-path:start")
+    local history = self:historySidecarPath(loan_id)
+    DiagnosticLog.log("[cleanup] history-path:end", tostring(history or ""))
+
+    DiagnosticLog.log("[cleanup] sidecar:attributes:start", tostring(sidecar or ""))
+    local sidecar_attributes = sidecar and lfs.attributes(sidecar) or nil
+    DiagnosticLog.log("[cleanup] sidecar:attributes:end", "exists=" .. tostring(sidecar_attributes ~= nil))
+
+    if history and sidecar_attributes then
+        DiagnosticLog.log("[cleanup] history-dir:create:start")
+        local history_dir_ok = koUtil.makePath(self:historyDir())
+        DiagnosticLog.log("[cleanup] history-dir:create:end", "ok=" .. tostring(history_dir_ok ~= false))
+
+        DiagnosticLog.log("[cleanup] sidecar:move:start", tostring(sidecar) .. " -> " .. tostring(history))
+        local moved = moveTree(sidecar, history)
+        DiagnosticLog.log("[cleanup] sidecar:move:end", "ok=" .. tostring(moved ~= false))
+        if not moved then return false end
+    else
+        DiagnosticLog.log("[cleanup] sidecar:move:skip", "history=" .. tostring(history ~= nil) .. " sidecar=" .. tostring(sidecar_attributes ~= nil))
+    end
+
+    DiagnosticLog.log("[cleanup] book:remove:start", path)
+    local removed, remove_err = os.remove(path)
+    DiagnosticLog.log("[cleanup] book:remove:end", "ok=" .. tostring(removed ~= nil) .. " error=" .. tostring(remove_err or ""))
+
+    DiagnosticLog.log("[cleanup] folders:prune:start", path)
     self:pruneEmptyBookFolders(path)
+    DiagnosticLog.log("[cleanup] folders:prune:end")
+    DiagnosticLog.log("[cleanup] removeTrackedBook:end")
     return true
 end
 
 function LibbyDashboard:downloadLoan(loan)
+    DiagnosticLog.log("[loan] download:requested")
     if not loan or not loan.adobe_format then
         local kind = loan and loan.media_type
         local message = kind == "audiobook" and _("Audiobooks are not currently supported by the Libby plugin.")
@@ -804,9 +975,12 @@ function LibbyDashboard:showBookStorageSettings()
 end
 
 function LibbyDashboard:refreshBrowserSnapshot(browser)
+    DiagnosticLog.log("[refresh] request")
     local wifi_on = type(NetworkMgr.isWifiOn) ~= "function" or NetworkMgr:isWifiOn()
     local connected = type(NetworkMgr.isConnected) ~= "function" or NetworkMgr:isConnected()
+    DiagnosticLog.log("[refresh] network-state", "wifi=" .. tostring(wifi_on) .. " connected=" .. tostring(connected))
     if not (wifi_on and connected) then
+        DiagnosticLog.log("[refresh] blocked-offline")
         UIManager:show(InfoMessage:new{
             text = _("Wi-Fi is not available. Connect to Wi-Fi and try again."),
         })
@@ -814,10 +988,15 @@ function LibbyDashboard:refreshBrowserSnapshot(browser)
     end
 
     browser.refresh_state = "refreshing"
+    DiagnosticLog.log("[refresh] ui:update-refreshing:start")
     browser:updateItems()
+    DiagnosticLog.log("[refresh] ui:update-refreshing:end")
 
+    DiagnosticLog.log("[refresh] runWhenConnected:schedule")
     NetworkMgr:runWhenConnected(function()
+        DiagnosticLog.log("[refresh] runWhenConnected:entered")
         Trapper:wrap(function()
+            DiagnosticLog.log("[refresh] subprocess:start")
             local completed, encoded = Trapper:dismissableRunInSubprocess(function()
                 local state = self.controller:sync_libby()
                 if not state then return nil end
@@ -825,32 +1004,80 @@ function LibbyDashboard:refreshBrowserSnapshot(browser)
                 if not normalized then return nil end
                 return rapidjson.encode(normalized)
             end, nil, true)
+            DiagnosticLog.log("[refresh] subprocess:end",
+                "completed=" .. tostring(completed) .. " encoded_type=" .. type(encoded))
             if not completed or type(encoded) ~= "string" then
+                DiagnosticLog.log("[refresh] failure-nextTick:schedule", "stage=subprocess")
                 UIManager:nextTick(function()
-                    if not UIManager:isWidgetShown(browser) then return end
+                    DiagnosticLog.log("[refresh] failure-nextTick:entered", "stage=subprocess")
+                    if not UIManager:isWidgetShown(browser) then
+                        DiagnosticLog.log("[refresh] failure-nextTick:browser-hidden", "stage=subprocess")
+                        return
+                    end
                     browser.refresh_state = "failed"
                     browser:updateItems()
+                    DiagnosticLog.log("[refresh] failure-nextTick:complete", "stage=subprocess")
                 end)
                 return
             end
 
+            DiagnosticLog.log("[refresh] decode:start")
             local ok, refreshed = pcall(rapidjson.decode, encoded)
-            if not ok or type(refreshed) ~= "table" or not self.controller:save_libby_snapshot(refreshed) then
+            DiagnosticLog.log("[refresh] decode:end",
+                "ok=" .. tostring(ok) .. " type=" .. type(refreshed))
+            if not ok or type(refreshed) ~= "table" then
+                DiagnosticLog.log("[refresh] failure-nextTick:schedule", "stage=decode")
                 UIManager:nextTick(function()
-                    if not UIManager:isWidgetShown(browser) then return end
+                    DiagnosticLog.log("[refresh] failure-nextTick:entered", "stage=decode")
+                    if not UIManager:isWidgetShown(browser) then
+                        DiagnosticLog.log("[refresh] failure-nextTick:browser-hidden", "stage=decode")
+                        return
+                    end
                     browser.refresh_state = "failed"
                     browser:updateItems()
+                    DiagnosticLog.log("[refresh] failure-nextTick:complete", "stage=decode")
                 end)
                 return
             end
 
+            DiagnosticLog.log("[refresh] snapshot-save:start")
+            local saved = self.controller:save_libby_snapshot(refreshed)
+            DiagnosticLog.log("[refresh] snapshot-save:end", "saved=" .. tostring(saved ~= nil and saved ~= false))
+            if not saved then
+                DiagnosticLog.log("[refresh] failure-nextTick:schedule", "stage=save")
+                UIManager:nextTick(function()
+                    DiagnosticLog.log("[refresh] failure-nextTick:entered", "stage=save")
+                    if not UIManager:isWidgetShown(browser) then
+                        DiagnosticLog.log("[refresh] failure-nextTick:browser-hidden", "stage=save")
+                        return
+                    end
+                    browser.refresh_state = "failed"
+                    browser:updateItems()
+                    DiagnosticLog.log("[refresh] failure-nextTick:complete", "stage=save")
+                end)
+                return
+            end
+
+            DiagnosticLog.log("[refresh] success-nextTick:schedule")
             UIManager:nextTick(function()
-                if not UIManager:isWidgetShown(browser) then return end
+                DiagnosticLog.log("[refresh] success-nextTick:entered")
+                if not UIManager:isWidgetShown(browser) then
+                    DiagnosticLog.log("[refresh] success-nextTick:browser-hidden")
+                    return
+                end
+                DiagnosticLog.log("[refresh] reconcile:start")
                 self.controller:reconcile_downloaded_loans(refreshed, function(path)
+                    DiagnosticLog.log("[refresh] reconcile:remove-book", tostring(path or ""))
                     self:removeTrackedBook(path)
                 end)
+                DiagnosticLog.log("[refresh] reconcile:end")
+                DiagnosticLog.log("[refresh] browser-refresh:start")
                 browser:refreshSnapshot(refreshed, "live")
+                DiagnosticLog.log("[refresh] browser-refresh:end")
+                DiagnosticLog.log("[refresh] cover-prefetch:start")
                 self:prefetchBrowserCovers(browser)
+                DiagnosticLog.log("[refresh] cover-prefetch:end")
+                DiagnosticLog.log("[refresh] complete")
             end)
         end)
     end)
@@ -877,6 +1104,7 @@ function LibbyDashboard:scheduleBrowserRefresh(browser)
 end
 
 function LibbyDashboard:returnLoan(loan)
+    DiagnosticLog.log("[loan] return:requested")
     if type(loan) ~= "table" then return end
     if self.controller.settings.developer_mode == true then
         UIManager:show(InfoMessage:new{ text = _("Return is disabled while Developer Mode is enabled.") })
@@ -905,6 +1133,7 @@ function LibbyDashboard:returnLoan(loan)
 end
 
 function LibbyDashboard:showBrowser()
+    DiagnosticLog.log("[ui] dashboard:open")
     if self.catalog_browser ~= nil then return end
 
     self.catalog_browser = LibbyCatalog:new{
@@ -1461,6 +1690,7 @@ Libby Dashboard for KOReader is an independent personal project and is not affil
 end
 
 function LibbyDashboard:showSettings()
+    DiagnosticLog.log("[ui] settings:open")
     local dialog
     local buttons = {
         { { text = _("Authentication"), callback = function() UIManager:close(dialog); self:showAuthenticationSettings() end } },
