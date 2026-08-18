@@ -114,6 +114,20 @@ function KOReaderController:save()
     return true
 end
 
+function KOReaderController:get_skipped_update_version()
+    local version = self.settings.skipped_update_version
+    if type(version) ~= "string" or version == "" then return nil end
+    return version
+end
+
+function KOReaderController:set_skipped_update_version(version)
+    if version ~= nil and (type(version) ~= "string" or version == "") then
+        return nil, "Skipped update version must be a non-empty string"
+    end
+    self.settings.skipped_update_version = version
+    return self:save()
+end
+
 function KOReaderController:set_book_path_template(template)
     local valid, err = PathTemplate.validate(template)
     if not valid then return nil, err end

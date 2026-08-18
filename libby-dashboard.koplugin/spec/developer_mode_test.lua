@@ -88,4 +88,11 @@ explicit:load()
 explicit:fulfill_acsm("book.acsm", "book.epub", { protected_epub = true })
 assert(captured_options.protected_epub == true, "explicit fulfillment options must still override developer defaults")
 
+local update_store = storeWith({ skipped_update_version = "0.2.5", adobe_registration = { ok = true } })
+local updates = KOReaderController.new{ settings_store = update_store }
+updates:load()
+assert(updates:get_skipped_update_version() == "0.2.5")
+assert(updates:set_skipped_update_version("0.2.6") == true)
+assert(update_store.saved.skipped_update_version == "0.2.6")
+
 print("developer_mode_test: ok")

@@ -3,6 +3,7 @@ local Device = require("device")
 local InfoMessage = require("ui/widget/infomessage")
 local NetworkMgr = require("ui/network/manager")
 local NetworkAction = require("network_action")
+local UpdatePolicy = require("update_policy")
 local UIManager = require("ui/uimanager")
 local lfs = require("libs/libkoreader-lfs")
 local ltn12 = require("ltn12")
@@ -204,46 +205,80 @@ local function apply(plugin_dir, release)
     return true
 end
 
+local function installRelease(plugin, release)
+    NetworkAction.run(plugin, NetworkMgr, UIManager, function()
+        local updating_message = InfoMessage:new{ text = _("Downloading and installing Libby Dashboard update...") }
+        UIManager:show(updating_message)
+        UIManager:forceRePaint()
+        local ok, apply_err = apply(plugin.path, release)
+        UIManager:close(updating_message)
+        UIManager:forceRePaint()
+        if not ok then
+            UIManager:show(InfoMessage:new{ text = _("Update failed:") .. string.char(10, 10) .. tostring(apply_err), timeout = 6 })
+            return
+        end
+        UIManager:show(ConfirmBox:new{
+            text = _("Libby Dashboard v") .. release.version .. _(" installed. KOReader must restart to use the update."),
+            ok_text = _("Restart now"),
+            ok_callback = function() UIManager:quit(UIManager.RETURN_CODE_REBOOT or 85) end,
+            cancel_text = _("Later"),
+        })
+    end)
+end
+
+local function promptRelease(plugin, release, automatic)
+    local box = {
+        text = _("Libby Dashboard v") .. release.version .. _(" is available.") .. string.char(10, 10)
+            .. _("Installed: v") .. plugin.PLUGIN_VERSION .. string.char(10, 10)
+            .. _("Download and install the update?"),
+        ok_text = automatic and _("Yes") or _("Update"),
+        ok_callback = function() installRelease(plugin, release) end,
+    }
+    if automatic then
+        box.cancel_text = _("Skip")
+        box.cancel_callback = function()
+            local ok, err = plugin.controller:set_skipped_update_version(release.version)
+            if not ok then
+                UIManager:show(InfoMessage:new{ text = _("Could not save skipped update version:") .. string.char(10, 10) .. tostring(err), timeout = 6 })
+                return
+            end
+            UIManager:show(InfoMessage:new{
+                text = _("Libby Dashboard v") .. release.version .. _(" will be skipped.") .. string.char(10, 10)
+                    .. _("You will not be prompted for this version again. You can still install it at any time from Settings > Check for Updates."),
+                timeout = 7,
+            })
+        end
+    end
+    UIManager:show(ConfirmBox:new(box))
+end
+
+function Updater.checkAutomatic(plugin)
+    NetworkAction.run(plugin, NetworkMgr, UIManager, function()
+        local release = latestRelease()
+        if not release then return end
+        local skipped = plugin.controller:get_skipped_update_version()
+        if not UpdatePolicy.should_prompt(release.version, plugin.PLUGIN_VERSION, skipped, Updater.isNewer) then return end
+        promptRelease(plugin, release, true)
+    end)
+end
+
 function Updater.check(plugin, interactive)
     NetworkAction.run(plugin, NetworkMgr, UIManager, function()
         local checking_message = InfoMessage:new{ text = _("Checking for Libby Dashboard updates...") }
         UIManager:show(checking_message)
         UIManager:forceRePaint()
         local release, err = latestRelease()
-    UIManager:close(checking_message)
-    UIManager:forceRePaint()
-    if not release then
-        UIManager:show(InfoMessage:new{ text = _("Could not check for updates:") .. "\n\n" .. tostring(err), timeout = 6 })
-        return
-    end
-    if not Updater.isNewer(release.version, plugin.PLUGIN_VERSION) then
-        UIManager:show(InfoMessage:new{ text = _("Libby Dashboard is up to date (v") .. plugin.PLUGIN_VERSION .. ").", timeout = 4 })
-        return
-    end
-    UIManager:show(ConfirmBox:new{
-        text = _("Libby Dashboard v") .. release.version .. _(" is available.\n\nInstalled: v") .. plugin.PLUGIN_VERSION .. _("\n\nDownload and install the update?"),
-        ok_text = _("Update"),
-        ok_callback = function()
-            NetworkAction.run(plugin, NetworkMgr, UIManager, function()
-                local updating_message = InfoMessage:new{ text = _("Downloading and installing Libby Dashboard update...") }
-                UIManager:show(updating_message)
-                UIManager:forceRePaint()
-                local ok, apply_err = apply(plugin.path, release)
-            UIManager:close(updating_message)
-            UIManager:forceRePaint()
-            if not ok then
-                UIManager:show(InfoMessage:new{ text = _("Update failed:") .. "\n\n" .. tostring(apply_err), timeout = 6 })
-                return
-            end
-            UIManager:show(ConfirmBox:new{
-                text = _("Libby Dashboard v") .. release.version .. _(" installed. KOReader must restart to use the update."),
-                ok_text = _("Restart now"),
-                ok_callback = function() UIManager:quit(UIManager.RETURN_CODE_REBOOT or 85) end,
-                cancel_text = _("Later"),
-            })
-            end)
-        end,
-        })
+        UIManager:close(checking_message)
+        UIManager:forceRePaint()
+        if not release then
+            UIManager:show(InfoMessage:new{ text = _("Could not check for updates:") .. string.char(10, 10) .. tostring(err), timeout = 6 })
+            return
+        end
+        if not Updater.isNewer(release.version, plugin.PLUGIN_VERSION) then
+            UIManager:show(InfoMessage:new{ text = _("Libby Dashboard is up to date (v") .. plugin.PLUGIN_VERSION .. ").", timeout = 4 })
+            return
+        end
+        promptRelease(plugin, release, false)
     end)
 end
 
