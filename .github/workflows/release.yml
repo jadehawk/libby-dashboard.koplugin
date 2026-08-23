@@ -64,6 +64,7 @@ jobs:
           test -f libby-dashboard.koplugin/_meta.lua
           test -f libby-dashboard.koplugin/main.lua
           test -f libby-dashboard.koplugin/libby_dashboard_updater.lua
+          test -f libby-dashboard.koplugin/LICENSE-acsm.koplugin
 
       - name: Build plugin archive
         shell: bash
@@ -72,6 +73,7 @@ jobs:
           zip -qr libby-dashboard.koplugin.zip README.md libby-dashboard.koplugin
           unzip -Z1 libby-dashboard.koplugin.zip | grep -Fxq "README.md"
           unzip -Z1 libby-dashboard.koplugin.zip | grep -Fxq "libby-dashboard.koplugin/main.lua"
+          unzip -Z1 libby-dashboard.koplugin.zip | grep -Fxq "libby-dashboard.koplugin/LICENSE-acsm.koplugin"
 
       - name: Create GitHub release
         env:
