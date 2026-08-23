@@ -4,41 +4,44 @@ local ffi = require("ffi")
 
 local isAndroid = pcall(require, "android")
 
+-- LuaJIT keeps FFI declarations in one process-wide namespace. KOReader or
+-- another plugin may already have declared zlib's canonical names before
+-- Libby Dashboard loads, so keep all local ABI types plugin-private.
 ffi.cdef([[
-typedef void *voidpf;
-typedef unsigned char Bytef;
-typedef unsigned int uInt;
-typedef unsigned long uLong;
+typedef void *libby_z_voidpf;
+typedef unsigned char libby_z_Bytef;
+typedef unsigned int libby_z_uInt;
+typedef unsigned long libby_z_uLong;
 
-typedef voidpf (*alloc_func)(voidpf opaque, uInt items, uInt size);
-typedef void   (*free_func)(voidpf opaque, voidpf address);
+typedef libby_z_voidpf (*libby_z_alloc_func)(libby_z_voidpf opaque, libby_z_uInt items, libby_z_uInt size);
+typedef void   (*libby_z_free_func)(libby_z_voidpf opaque, libby_z_voidpf address);
 
-typedef struct z_stream_s {
-  Bytef    *next_in;
-  uInt     avail_in;
-  uLong    total_in;
+typedef struct libby_z_stream_s {
+  libby_z_Bytef    *next_in;
+  libby_z_uInt     avail_in;
+  libby_z_uLong    total_in;
 
-  Bytef    *next_out;
-  uInt     avail_out;
-  uLong    total_out;
+  libby_z_Bytef    *next_out;
+  libby_z_uInt     avail_out;
+  libby_z_uLong    total_out;
 
   char     *msg;
   void     *state;
 
-  alloc_func zalloc;
-  free_func  zfree;
-  voidpf     opaque;
+  libby_z_alloc_func zalloc;
+  libby_z_free_func  zfree;
+  libby_z_voidpf     opaque;
 
   int      data_type;
-  uLong    adler;
-  uLong    reserved;
-} z_stream;
+  libby_z_uLong    adler;
+  libby_z_uLong    reserved;
+} libby_z_stream;
 
 const char *zlibVersion(void);
-int inflateInit2_(z_stream *strm, int windowBits, const char *version, int stream_size);
-int inflate(z_stream *strm, int flush);
-int inflateEnd(z_stream *strm);
-uLong crc32(uLong crc, const Bytef *buf, uInt len);
+int inflateInit2_(libby_z_stream *strm, int windowBits, const char *version, int stream_size);
+int inflate(libby_z_stream *strm, int flush);
+int inflateEnd(libby_z_stream *strm);
+libby_z_uLong crc32(libby_z_uLong crc, const libby_z_Bytef *buf, libby_z_uInt len);
 ]])
 
 --- Resolve the system library directory for a given architecture.
@@ -113,8 +116,8 @@ local CHUNK_SIZE = 32768
 local buildInflater
 
 function zlib.inflateRaw(data)
-    local stream = ffi.new("z_stream[1]")
-    stream[0].next_in = ffi.cast("Bytef *", data)
+    local stream = ffi.new("libby_z_stream[1]")
+    stream[0].next_in = ffi.cast("libby_z_Bytef *", data)
     stream[0].avail_in = #data
 
     local rc = libz.inflateInit2_(stream, -15, libz.zlibVersion(), ffi.sizeof(stream[0]))
@@ -153,7 +156,7 @@ end
 -- :finalize() cleans up the zlib stream.
 -- Peak memory per update: 32KB output buffer (reused).
 function zlib.rawInflater()
-    local stream = ffi.new("z_stream[1]")
+    local stream = ffi.new("libby_z_stream[1]")
     local rc = libz.inflateInit2_(stream, -15, libz.zlibVersion(), ffi.sizeof(stream[0]))
     if rc ~= Z_OK then
         return nil, "inflateInit2 failed: " .. tostring(rc)
@@ -164,7 +167,7 @@ end
 
 --- Create a streaming zlib inflater (handles zlib header, not raw deflate).
 function zlib.inflater()
-    local stream = ffi.new("z_stream[1]")
+    local stream = ffi.new("libby_z_stream[1]")
     local rc = libz.inflateInit2_(stream, 15, libz.zlibVersion(), ffi.sizeof(stream[0]))
     if rc ~= Z_OK then
         return nil, "inflateInit2 failed: " .. tostring(rc)
@@ -186,7 +189,7 @@ function buildInflater(stream)
         if finished then
             return nil, "inflater already finalized"
         end
-        stream[0].next_in = ffi.cast("Bytef *", chunk)
+        stream[0].next_in = ffi.cast("libby_z_Bytef *", chunk)
         stream[0].avail_in = chunk_len
 
         while stream[0].avail_in > 0 do
@@ -231,7 +234,7 @@ function zlib.crc32(data)
         return nil, "crc32 expects string data"
     end
     local crc = libz.crc32(0, nil, 0)
-    crc = libz.crc32(crc, ffi.cast("const Bytef *", data), #data)
+    crc = libz.crc32(crc, ffi.cast("const libby_z_Bytef *", data), #data)
     return tonumber(crc)
 end
 
