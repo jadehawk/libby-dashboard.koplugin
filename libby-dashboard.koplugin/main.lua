@@ -7,6 +7,7 @@ end
 
 local Device = require("device")
 local DataStorage = require("datastorage")
+local Dispatcher = require("dispatcher")
 local DocumentRegistry = require("document/documentregistry")
 local DocSettings = require("docsettings")
 local LuaSettings = require("luasettings")
@@ -131,6 +132,7 @@ function LibbyDashboard:init()
     DiagnosticLog.log("[plugin] protected-epub:installed")
     self:registerAcsmProvider()
     DiagnosticLog.log("[plugin] acsm-provider:registered")
+    self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
     DiagnosticLog.log("[plugin] init:complete")
 end
@@ -1711,6 +1713,19 @@ function LibbyDashboard:showSettings()
         buttons = buttons,
     }
     UIManager:show(dialog)
+end
+
+function LibbyDashboard:onDispatcherRegisterActions()
+    Dispatcher:registerAction("libby_dashboard_open", {
+        category = "none",
+        event = "LibbyDashboardOpen",
+        title = _("Libby Dashboard: open dashboard"),
+        general = true,
+    })
+end
+
+function LibbyDashboard:onLibbyDashboardOpen()
+    self:showBrowser()
 end
 
 function LibbyDashboard:addToMainMenu(menu_items)
