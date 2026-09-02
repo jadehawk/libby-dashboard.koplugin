@@ -28,8 +28,8 @@ jobs:
         run: |
           set -euo pipefail
           version=$(awk -F'"' '/^[[:space:]]*version[[:space:]]*=/ { print $2; exit }' libby-dashboard.koplugin/_meta.lua)
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Plugin version in _meta.lua must be a semantic version (x.y.z); got: $version" >&2
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "Plugin version in _meta.lua must be x.y.z or x.y.z.w; got: $version" >&2
             exit 1
           fi
           tag="v${version}"

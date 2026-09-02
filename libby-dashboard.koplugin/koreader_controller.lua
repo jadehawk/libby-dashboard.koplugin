@@ -15,7 +15,7 @@ KOReaderController.__index = KOReaderController
 
 KOReaderController.SETTINGS_KEY = "libby_dashboard"
 
-local CURRENT_MIGRATION_INDEX = 1
+local CURRENT_MIGRATION_INDEX = 2
 
 local DEFAULTS = {
     settings_version = 1,
@@ -24,6 +24,12 @@ local DEFAULTS = {
     libby_shelf_columns = 4,
     libby_shelf_rows = 2,
     libby_shelf_page = 1,
+    libby_expanded_grid_columns = 4,
+    libby_expanded_grid_rows = 3,
+    libby_expanded_grid_page = 1,
+    libby_expanded_list_rows = 7,
+    libby_expanded_list_page = 1,
+    libby_expanded_view_mode = "grid",
     libby_snapshot = nil,
     libby_identity = nil,
     downloaded_loans = {},
@@ -89,6 +95,15 @@ function KOReaderController:load()
         self.settings.book_path_template = PathTemplate.DEFAULT_TEMPLATE
         self.settings.migration_index = 1
         DiagnosticLog.log("[controller] migration:applied", "index=1 book_path_template")
+        self:save()
+    end
+
+    if migration_index < 2 then
+        if tonumber(self.settings.libby_expanded_grid_rows) == 4 then
+            self.settings.libby_expanded_grid_rows = 3
+        end
+        self.settings.migration_index = 2
+        DiagnosticLog.log("[controller] migration:applied", "index=2 expanded_grid_rows")
         self:save()
     end
 

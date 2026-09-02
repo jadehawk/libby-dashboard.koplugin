@@ -29,6 +29,8 @@ local Screen = Device.screen
 local source_path = debug.getinfo(1, "S").source:gsub("^@", "")
 local plugin_root = source_path:match("^(.*)[/\\]libby_catalog%.lua$")
 local GLOBE_ICON_PATH = plugin_root and (plugin_root .. "/dependencies/icons/globe.svg") or nil
+local GRID_ICON_PATH = plugin_root and (plugin_root .. "/dependencies/icons/view-grid.svg") or nil
+local EXPIRES_TODAY_COLOR = Blitbuffer.colorFromName("red")
 
 local LibbyCatalog = InputContainer:extend{
     name = "libby_catalog",
@@ -98,15 +100,34 @@ end
 
 local function iconTap(icon, width, height, callback, icon_size, tap_extend_left)
     local size = icon_size or math.floor(height * 0.62)
+    local icon_widget
+    if type(icon) == "string" and (icon:find("/", 1, true) or icon:find("\\", 1, true)) then
+        icon_widget = IconWidget:new{ file = icon, width = size, height = size }
+    else
+        icon_widget = IconWidget:new{ icon = icon, width = size, height = size }
+    end
     local item = InputContainer:new{
         dimen = Geom:new{ w = width, h = height },
         CenterContainer:new{
             dimen = Geom:new{ w = width, h = height },
-            IconWidget:new{ icon = icon, width = size, height = size },
+            icon_widget,
         },
     }
     local tap_range = tap_extend_left and Geom:new{ x = -width, y = 0, w = width * 2, h = height } or item.dimen
     item.ges_events = { TapSelect = { GestureRange:new{ ges = "tap", range = tap_range } } }
+    item.onTapSelect = function()
+        if callback then callback() end
+        return true
+    end
+    return item
+end
+
+local function tappableWidget(widget, width, height, callback)
+    local item = InputContainer:new{
+        dimen = Geom:new{ w = width, h = height },
+        widget,
+    }
+    item.ges_events = { TapSelect = { GestureRange:new{ ges = "tap", range = item.dimen } } }
     item.onTapSelect = function()
         if callback then callback() end
         return true
@@ -185,6 +206,68 @@ local function safeText(value, max_len)
     local text = tostring(value or ""):gsub("[%z\1-\31\127]", " "):gsub("%s+", " ")
     if #text <= (max_len or 96) then return text end
     return text:sub(1, math.max(1, (max_len or 96) - 3)) .. "..."
+end
+
+local function loanTimeText(loan)
+    local days = loan and tonumber(loan.days_remaining)
+    if days == nil then return _("N/A") end
+    if days <= 0 then return _("Expires Today") end
+    if days == 1 then return _("1 day left") end
+    return string.format(_("%d days left"), days)
+end
+
+local function loanTimeColor(loan)
+    local days = loan and tonumber(loan.days_remaining)
+    return days ~= nil and days <= 0 and EXPIRES_TODAY_COLOR or Blitbuffer.COLOR_BLACK
+end
+
+-- TextWidget's colorblitFrom() path intentionally coerces RGB colors to grayscale.
+-- Use TextBoxWidget for RGB foreground colors so "Expires Today" stays red on color screens.
+local function colorAwareTextWidget(args)
+    local fgcolor = args.fgcolor or Blitbuffer.COLOR_BLACK
+    if not args.force_textbox and Blitbuffer.isColor8(fgcolor) then
+        return TextWidget:new(args)
+    end
+    return TextBoxWidget:new{
+        text = args.text,
+        face = args.face,
+        bold = args.bold,
+        fgcolor = fgcolor,
+        bgcolor = Blitbuffer.COLOR_WHITE,
+        width = math.max(1, args.max_width or args.width or Screen:scaleBySize(120)),
+        height = args.forced_height or args.height,
+        alignment = args.alignment or "left",
+        line_height = 0,
+        use_xtext = true,
+    }
+end
+
+local function alignedColorValueRow(label_text, value_text, face, width, value_color, bold)
+    local measure = TextWidget:new{ text = label_text, face = face }
+    local label_w = measure:getSize().w
+    local row_h = measure:getSize().h
+    if measure.free then measure:free() end
+    local value_w = math.max(1, width - label_w)
+    return HorizontalGroup:new{
+        align = "center",
+        colorAwareTextWidget{
+            text = label_text,
+            face = face,
+            fgcolor = Blitbuffer.COLOR_BLACK,
+            max_width = label_w,
+            forced_height = row_h,
+            force_textbox = true,
+        },
+        colorAwareTextWidget{
+            text = value_text,
+            face = face,
+            fgcolor = value_color,
+            bold = bold,
+            max_width = value_w,
+            forced_height = row_h,
+            force_textbox = true,
+        },
+    }
 end
 
 local function outlinedLabel(text, width, height)
@@ -302,8 +385,12 @@ local function cardId(card)
     return card and (card.id or card.cardId)
 end
 
+local function rawCardName(card)
+    return tostring(card and (card.name or card.libraryName or card.id) or _("Library"))
+end
+
 local function cardName(card)
-    return safeText(card and (card.name or card.libraryName or card.id) or _("Library"), 30)
+    return safeText(rawCardName(card), 30)
 end
 
 function LibbyCatalog:init()
@@ -317,6 +404,14 @@ function LibbyCatalog:init()
     self.grid_columns = math.max(2, math.min(8, tonumber(self.settings.libby_shelf_columns) or 4))
     self.grid_rows = math.max(1, math.min(5, tonumber(self.settings.libby_shelf_rows) or 2))
     self.shelf_page = math.max(1, tonumber(self.settings.libby_shelf_page) or 1)
+    self.expanded = false
+    self.expanded_detail_visible = false
+    self.expanded_view_mode = self.settings.libby_expanded_view_mode == "list" and "list" or "grid"
+    self.expanded_grid_columns = math.max(2, math.min(8, tonumber(self.settings.libby_expanded_grid_columns) or 4))
+    self.expanded_grid_rows = math.max(1, math.min(6, tonumber(self.settings.libby_expanded_grid_rows) or 3))
+    self.expanded_grid_page = math.max(1, tonumber(self.settings.libby_expanded_grid_page) or 1)
+    self.expanded_list_rows = math.max(4, math.min(12, tonumber(self.settings.libby_expanded_list_rows) or 7))
+    self.expanded_list_page = math.max(1, tonumber(self.settings.libby_expanded_list_page) or 1)
     self.ges_events = {
         SwipeShelfNext = { GestureRange:new{ ges = "swipe", range = self.dimen, direction = "west" } },
         SwipeShelfPrev = { GestureRange:new{ ges = "swipe", range = self.dimen, direction = "east" } },
@@ -334,6 +429,94 @@ function LibbyCatalog:loansForSelectedCard()
         end
     end
     return filtered
+end
+
+function LibbyCatalog:selectedLibraryInfo()
+    local loans = self:loansForSelectedCard()
+    if self.selected_card_id == "__all__" then
+        return _("All Libraries"), #loans
+    end
+    for _, card in ipairs(type(self.snapshot.cards) == "table" and self.snapshot.cards or {}) do
+        if tostring(cardId(card) or "") == tostring(self.selected_card_id or "") then
+            return rawCardName(card), #loans
+        end
+    end
+    local fallback = loans[1] and loans[1].library or _("Library")
+    return tostring(fallback), #loans
+end
+
+function LibbyCatalog:expandedPageCount()
+    local per_page = self.expanded_view_mode == "list"
+        and self.expanded_list_rows
+        or math.max(1, self.expanded_grid_columns * self.expanded_grid_rows)
+    return math.max(1, math.ceil(#self:loansForSelectedCard() / math.max(1, per_page)))
+end
+
+function LibbyCatalog:expandedPage()
+    return self.expanded_view_mode == "list" and self.expanded_list_page or self.expanded_grid_page
+end
+
+function LibbyCatalog:setExpandedPage(page)
+    local count = self:expandedPageCount()
+    local next_page = math.max(1, math.min(count, tonumber(page) or 1))
+    if self.expanded_view_mode == "list" then
+        self.expanded_list_page = next_page
+        self.settings.libby_expanded_list_page = next_page
+    else
+        self.expanded_grid_page = next_page
+        self.settings.libby_expanded_grid_page = next_page
+    end
+    if self.selection_changed_callback then self.selection_changed_callback() end
+    self:updateItems()
+end
+
+function LibbyCatalog:openExpanded()
+    self.expanded = true
+    self.expanded_detail_visible = false
+    self:updateItems()
+end
+
+function LibbyCatalog:closeExpanded()
+    self.expanded = false
+    self.expanded_detail_visible = false
+    self:updateItems()
+end
+
+function LibbyCatalog:toggleExpandedView()
+    self.expanded_view_mode = self.expanded_view_mode == "grid" and "list" or "grid"
+    self.settings.libby_expanded_view_mode = self.expanded_view_mode
+    self.expanded_detail_visible = false
+    if self.selection_changed_callback then self.selection_changed_callback() end
+    self:updateItems()
+end
+
+function LibbyCatalog:showExpandedDetail(loan)
+    self.selected_loan_id = loanKey(loan)
+    self.expanded_detail_visible = true
+    self:persistSelection()
+    self:updateItems()
+end
+
+function LibbyCatalog:hideExpandedDetail()
+    self.expanded_detail_visible = false
+    self:updateItems()
+end
+
+function LibbyCatalog:setExpandedLayout(columns, rows, list_rows)
+    self.expanded_grid_columns = math.max(2, math.min(8, tonumber(columns) or 4))
+    self.expanded_grid_rows = math.max(1, math.min(6, tonumber(rows) or 3))
+    self.expanded_list_rows = math.max(4, math.min(12, tonumber(list_rows) or 7))
+    self.settings.libby_expanded_grid_columns = self.expanded_grid_columns
+    self.settings.libby_expanded_grid_rows = self.expanded_grid_rows
+    self.settings.libby_expanded_list_rows = self.expanded_list_rows
+    local loan_count = #self:loansForSelectedCard()
+    local grid_pages = math.max(1, math.ceil(loan_count / math.max(1, self.expanded_grid_columns * self.expanded_grid_rows)))
+    local list_pages = math.max(1, math.ceil(loan_count / math.max(1, self.expanded_list_rows)))
+    self.expanded_grid_page = math.min(self.expanded_grid_page, grid_pages)
+    self.expanded_list_page = math.min(self.expanded_list_page, list_pages)
+    self.settings.libby_expanded_grid_page = self.expanded_grid_page
+    self.settings.libby_expanded_list_page = self.expanded_list_page
+    self:updateItems()
 end
 
 function LibbyCatalog:selectedLoan()
@@ -365,6 +548,10 @@ function LibbyCatalog:selectCard(id)
     self.selected_loan_id = nil
     self.shelf_page = 1
     self.settings.libby_shelf_page = 1
+    self.expanded_grid_page = 1
+    self.expanded_list_page = 1
+    self.settings.libby_expanded_grid_page = 1
+    self.settings.libby_expanded_list_page = 1
     self:persistSelection()
     self:updateItems()
 end
@@ -392,12 +579,20 @@ function LibbyCatalog:gotoShelfPage(page)
 end
 
 function LibbyCatalog:onSwipeShelfNext()
-    self:gotoShelfPage(self.shelf_page + 1)
+    if self.expanded and not self.expanded_detail_visible then
+        self:setExpandedPage(self:expandedPage() + 1)
+    else
+        self:gotoShelfPage(self.shelf_page + 1)
+    end
     return true
 end
 
 function LibbyCatalog:onSwipeShelfPrev()
-    self:gotoShelfPage(self.shelf_page - 1)
+    if self.expanded and not self.expanded_detail_visible then
+        self:setExpandedPage(self:expandedPage() - 1)
+    else
+        self:gotoShelfPage(self.shelf_page - 1)
+    end
     return true
 end
 
@@ -444,27 +639,34 @@ function LibbyCatalog:heroWidget(width, height)
         { label = _("Series Index: "), value = safeText(loan.series_index ~= nil and tostring(loan.series_index) or _("N/A"), 40) },
         { label = _("Format: "), value = mediaLabel(loan) },
         { label = _("Library: "), value = safeText(loan.library or _("N/A"), 100) },
-        { label = _("Expires On: "), value = loan.days_remaining ~= nil and (tostring(loan.days_remaining) .. _(" days left")) or _("N/A") },
+        { label = _("Expires On: "), value = loanTimeText(loan), fgcolor = loanTimeColor(loan) },
     }
     for _, row in ipairs(metadata_rows) do
-        local label = TextWidget:new{
-            text = row.label,
-            face = metadata_face,
-        }
-        local value_w = math.max(1, text_w - label:getSize().w)
-        local row_h = math.max(1, label:getSize().h - Screen:scaleBySize(4))
-        label.forced_height = row_h
-        table.insert(info_top, HorizontalGroup:new{
-            align = "center",
-            label,
-            TextWidget:new{
-                text = row.value,
-                bold = true,
+        if row.fgcolor then
+            table.insert(info_top, alignedColorValueRow(
+                row.label, row.value, metadata_face, text_w, row.fgcolor, true
+            ))
+        else
+            local label = TextWidget:new{
+                text = row.label,
                 face = metadata_face,
-                max_width = value_w,
-                forced_height = row_h,
-            },
-        })
+            }
+            local value_w = math.max(1, text_w - label:getSize().w)
+            local row_h = math.max(1, label:getSize().h - Screen:scaleBySize(4))
+            label.forced_height = row_h
+            table.insert(info_top, HorizontalGroup:new{
+                align = "center",
+                label,
+                colorAwareTextWidget{
+                    text = row.value,
+                    fgcolor = Blitbuffer.COLOR_BLACK,
+                    bold = true,
+                    face = metadata_face,
+                    max_width = value_w,
+                    forced_height = row_h,
+                },
+            })
+        end
     end
 
     local action_text
@@ -576,15 +778,37 @@ function LibbyCatalog:tabsWidget(width, height)
         table.insert(tabs, { id = id, name = cardName(card), count = count })
     end
 
-    local label_h = Screen:scaleBySize(24)
+    local label_h = Screen:scaleBySize(32)
     local tabs_h = math.max(1, height - label_h)
+    local library_name = self:selectedLibraryInfo()
+    local expand_inset = Screen:scaleBySize(3)
+    local expand_w = math.min(Screen:scaleBySize(76), math.max(Screen:scaleBySize(72), math.floor(width * 0.15)))
+    local expand_h = math.max(Screen:scaleBySize(24), label_h - 2 * expand_inset)
+    local expand_slot_w = expand_w + 2 * expand_inset
+    local label_text_w = math.max(1, width - expand_slot_w - 2 * Size.border.thin)
+    local label_row = HorizontalGroup:new{ align = "center" }
+    table.insert(label_row, CenterContainer:new{
+        dimen = Geom:new{ w = label_text_w, h = label_h },
+        LeftContainer:new{
+            dimen = Geom:new{ w = math.max(1, label_text_w - Screen:scaleBySize(12)), h = label_h },
+            TextWidget:new{
+                text = _("Library: ") .. tostring(library_name),
+                face = Font:getFace("cfont", 15),
+                bold = true,
+                max_width = math.max(1, label_text_w - Screen:scaleBySize(12)),
+            },
+        },
+    })
+    table.insert(label_row, CenterContainer:new{
+        dimen = Geom:new{ w = expand_slot_w, h = label_h },
+        actionButton(_("Expand"), expand_w, expand_h, true, function()
+            self:openExpanded()
+        end),
+    })
     local label = FrameContainer:new{
         width = width, height = label_h, margin = 0, padding = 0,
         bordersize = Size.border.thin, background = Blitbuffer.COLOR_WHITE, radius = 0,
-        CenterContainer:new{
-            dimen = Geom:new{ w = width, h = label_h },
-            TextWidget:new{ text = _("Libraries"), face = Font:getFace("cfont", 17), bold = true },
-        },
+        label_row,
     }
     local row = HorizontalGroup:new{ align = "center" }
     local count = math.max(1, #tabs)
@@ -661,6 +885,307 @@ function LibbyCatalog:gridWidget(width, height)
     return grid
 end
 
+function LibbyCatalog:expandedHeaderWidget(width, height)
+    local library_name, loan_count = self:selectedLibraryInfo()
+    local icon_w = height
+    local title_w = math.max(1, width - 3 * icon_w)
+    local icon_size = math.min(Screen:scaleBySize(26), math.max(1, height - Screen:scaleBySize(10)))
+    local row = HorizontalGroup:new{ align = "center" }
+    table.insert(row, CenterContainer:new{
+        dimen = Geom:new{ w = title_w, h = height },
+        LeftContainer:new{
+            dimen = Geom:new{ w = math.max(1, title_w - Screen:scaleBySize(12)), h = height },
+            TextWidget:new{
+                text = _("Library: ") .. tostring(library_name) .. " (" .. tostring(loan_count) .. ")",
+                face = Font:getFace("cfont", 15),
+                bold = true,
+                max_width = math.max(1, title_w - Screen:scaleBySize(12)),
+            },
+        },
+    })
+    table.insert(row, iconTap("cre.render.reload", icon_w, height, function()
+        if self.refresh_state ~= "refreshing" and self.refresh_callback then self.refresh_callback() end
+    end, icon_size))
+    local toggle_icon = self.expanded_view_mode == "grid" and "appbar.menu" or (GRID_ICON_PATH or "column.two")
+    table.insert(row, iconTap(toggle_icon, icon_w, height, function() self:toggleExpandedView() end, icon_size))
+    table.insert(row, iconTap("close", icon_w, height, function() self:closeExpanded() end, icon_size))
+    return FrameContainer:new{
+        width = width, height = height, margin = 0, padding = 0,
+        bordersize = Size.border.thin, background = Blitbuffer.COLOR_WHITE,
+        row,
+    }
+end
+
+function LibbyCatalog:expandedGridWidget(width, height)
+    local loans = self:loansForSelectedCard()
+    if #loans == 0 then
+        return CenterContainer:new{
+            dimen = Geom:new{ w = width, h = height },
+            TextWidget:new{ text = _("No borrowed titles to display."), face = Font:getFace("infofont") },
+        }
+    end
+
+    local gap = Screen:scaleBySize(8)
+    local label_h = Screen:scaleBySize(22)
+    local cols = self.expanded_grid_columns
+    local rows = self.expanded_grid_rows
+    local per_page = math.max(1, cols * rows)
+    local pages = math.max(1, math.ceil(#loans / per_page))
+    self.expanded_grid_page = math.max(1, math.min(self.expanded_grid_page, pages))
+    local start_index = (self.expanded_grid_page - 1) * per_page + 1
+    local page_items = math.max(0, math.min(per_page, #loans - start_index + 1))
+    local visible_rows = math.max(1, math.min(rows, math.ceil(page_items / cols)))
+    -- Keep cell sizing based on the configured page rows so short pages stay top-packed.
+    local cell_w = math.max(1, math.floor((width - (cols + 1) * gap) / cols))
+    local cell_h = math.max(1, math.floor((height - (rows + 1) * gap) / rows))
+    local cover_area_h = math.max(1, cell_h - label_h)
+    local cover_w = math.max(1, math.min(cell_w, math.floor(cover_area_h / 1.5)))
+    local cover_h = math.max(1, math.min(cover_area_h, math.floor(cover_w * 1.5)))
+
+    local grid = VerticalGroup:new{ align = "center" }
+    local index = start_index
+    for _ = 1, rows do
+        table.insert(grid, VerticalSpan:new{ width = gap })
+        local row = HorizontalGroup:new{ align = "center" }
+        table.insert(row, HorizontalSpan:new{ width = gap })
+        for _ = 1, cols do
+            local loan = loans[index]
+            if loan and index < start_index + per_page then
+                local path = self.cover_path_callback and self.cover_path_callback(loan) or nil
+                local card = VerticalGroup:new{ align = "center" }
+                table.insert(card, coverWidget(loan, cover_w, cover_h, path, false))
+                table.insert(card, CenterContainer:new{
+                    dimen = Geom:new{ w = cell_w, h = label_h },
+                    colorAwareTextWidget{
+                        text = loanTimeText(loan),
+                        face = Font:getFace("cfont", 14),
+                        fgcolor = loanTimeColor(loan),
+                        bold = true,
+                        max_width = cell_w,
+                        height = label_h,
+                        alignment = "center",
+                    },
+                })
+                local centered = CenterContainer:new{ dimen = Geom:new{ w = cell_w, h = cell_h }, card }
+                table.insert(row, tappableWidget(centered, cell_w, cell_h, function()
+                    self:showExpandedDetail(loan)
+                end))
+            else
+                table.insert(row, HorizontalSpan:new{ width = cell_w })
+            end
+            table.insert(row, HorizontalSpan:new{ width = gap })
+            index = index + 1
+        end
+        table.insert(grid, row)
+    end
+    return grid
+end
+
+function LibbyCatalog:expandedListWidget(width, height)
+    local loans = self:loansForSelectedCard()
+    if #loans == 0 then
+        return CenterContainer:new{
+            dimen = Geom:new{ w = width, h = height },
+            TextWidget:new{ text = _("No borrowed titles to display."), face = Font:getFace("infofont") },
+        }
+    end
+
+    local rows = self.expanded_list_rows
+    local pages = math.max(1, math.ceil(#loans / rows))
+    self.expanded_list_page = math.max(1, math.min(self.expanded_list_page, pages))
+    local start_index = (self.expanded_list_page - 1) * rows + 1
+    local row_h = math.max(1, math.floor(height / rows))
+    local pad = Screen:scaleBySize(5)
+    local loan_w = math.min(Screen:scaleBySize(118), math.floor(width * 0.22))
+    local list = VerticalGroup:new{ align = "center" }
+
+    for offset = 0, rows - 1 do
+        local loan = loans[start_index + offset]
+        if loan then
+            local cover_h = math.max(1, row_h - 2 * pad)
+            local cover_w = math.max(1, math.floor(cover_h * 0.66))
+            local meta_w = math.max(1, width - cover_w - loan_w - 5 * pad)
+            local path = self.cover_path_callback and self.cover_path_callback(loan) or nil
+            local meta = VerticalGroup:new{ align = "left" }
+            table.insert(meta, TextWidget:new{
+                text = safeText(loan.title or _("Untitled"), 120),
+                face = Font:getFace("cfont", 18),
+                bold = true,
+                max_width = meta_w,
+            })
+            table.insert(meta, TextWidget:new{
+                text = safeText(loan.author or _("N/A"), 90),
+                face = Font:getFace("smallinfofont", 14),
+                max_width = meta_w,
+            })
+            local fallback_library = self:selectedLibraryInfo()
+            table.insert(meta, TextWidget:new{
+                text = tostring(loan.library or fallback_library),
+                face = Font:getFace("smallinfofont", 13),
+                max_width = meta_w,
+            })
+
+            local row_content = HorizontalGroup:new{ align = "center" }
+            table.insert(row_content, HorizontalSpan:new{ width = pad })
+            table.insert(row_content, coverWidget(loan, cover_w, cover_h, path, false))
+            table.insert(row_content, HorizontalSpan:new{ width = 2 * pad })
+            table.insert(row_content, CenterContainer:new{
+                dimen = Geom:new{ w = meta_w, h = row_h },
+                LeftContainer:new{ dimen = Geom:new{ w = meta_w, h = row_h }, meta },
+            })
+            table.insert(row_content, CenterContainer:new{
+                dimen = Geom:new{ w = loan_w, h = row_h },
+                colorAwareTextWidget{
+                    text = loanTimeText(loan),
+                    face = Font:getFace("cfont", 15),
+                    fgcolor = loanTimeColor(loan),
+                    bold = true,
+                    max_width = loan_w,
+                    alignment = "center",
+                },
+            })
+            table.insert(row_content, HorizontalSpan:new{ width = pad })
+            local frame = FrameContainer:new{
+                width = width, height = row_h, margin = 0, padding = 0,
+                bordersize = Size.border.thin, background = Blitbuffer.COLOR_WHITE,
+                row_content,
+            }
+            table.insert(list, tappableWidget(frame, width, row_h, function()
+                self:showExpandedDetail(loan)
+            end))
+        else
+            table.insert(list, VerticalSpan:new{ width = row_h })
+        end
+    end
+    return list
+end
+
+function LibbyCatalog:expandedPaginationWidget(width, height)
+    local pages = self:expandedPageCount()
+    local current = math.max(1, math.min(self:expandedPage(), pages))
+    local can_back = current > 1
+    local can_forward = current < pages
+    local nav_w = math.floor(width * 0.75)
+    local icon_size = math.floor(height * 0.62)
+    local function slot(ratio) return math.max(1, math.floor(nav_w * ratio)) end
+    local first = Button:new{
+        icon = "chevron.first", icon_width = icon_size, icon_height = icon_size,
+        width = slot(0.18), enabled = can_back, callback = function() self:setExpandedPage(1) end,
+        margin = 0, bordersize = 0, show_parent = self,
+    }
+    local prev = Button:new{
+        icon = "chevron.left", icon_width = icon_size, icon_height = icon_size,
+        width = slot(0.18), enabled = can_back, callback = function() self:setExpandedPage(current - 1) end,
+        margin = 0, bordersize = 0, show_parent = self,
+    }
+    local page = Button:new{
+        text = string.format(_("Page %d of %d"), current, pages),
+        text_font_face = "cfont", text_font_size = 15,
+        width = slot(0.28), margin = 0, bordersize = 0, show_parent = self,
+    }
+    local next_btn = Button:new{
+        icon = "chevron.right", icon_width = icon_size, icon_height = icon_size,
+        width = slot(0.18), enabled = can_forward, callback = function() self:setExpandedPage(current + 1) end,
+        margin = 0, bordersize = 0, show_parent = self,
+    }
+    local last = Button:new{
+        icon = "chevron.last", icon_width = icon_size, icon_height = icon_size,
+        width = slot(0.18), enabled = can_forward, callback = function() self:setExpandedPage(pages) end,
+        margin = 0, bordersize = 0, show_parent = self,
+    }
+    return CenterContainer:new{
+        dimen = Geom:new{ w = width, h = height },
+        HorizontalGroup:new{ align = "center", first, prev, page, next_btn, last },
+    }
+end
+
+function LibbyCatalog:expandedDetailWidget(width, height)
+    local loan = self:selectedLoan()
+    if not loan then return nil end
+    local pad = Size.padding.default
+    local body_h = math.max(1, height)
+    local cover_h = math.max(1, body_h - 2 * pad)
+    local cover_w = math.max(1, math.floor(cover_h * 0.66))
+    local info_w = math.max(1, width - cover_w - 4 * pad)
+    local path = self.cover_path_callback and self.cover_path_callback(loan) or nil
+
+    local metadata = VerticalGroup:new{ align = "left" }
+    table.insert(metadata, TextWidget:new{
+        text = safeText(loan.title or _("Untitled"), 120),
+        face = Font:getFace("cfont", 22), bold = true, max_width = info_w,
+    })
+    local detail_face = Font:getFace("smallinfofont", 16)
+    local detail_rows = {
+        _("Author: ") .. safeText(loan.author or _("N/A"), 80),
+        _("Series: ") .. safeText(loan.series or _("N/A"), 80),
+        _("Series Index: ") .. safeText(loan.series_index ~= nil and tostring(loan.series_index) or _("N/A"), 40),
+        _("Format: ") .. mediaLabel(loan),
+        _("Library: ") .. safeText(loan.library or _("N/A"), 100),
+    }
+    for _, detail_text in ipairs(detail_rows) do
+        table.insert(metadata, TextWidget:new{
+            text = detail_text, face = detail_face, max_width = info_w,
+        })
+    end
+    table.insert(metadata, alignedColorValueRow(
+        _("Expires On: "), loanTimeText(loan), detail_face, info_w, loanTimeColor(loan), false
+    ))
+
+    local action_h = Screen:scaleBySize(34)
+    local gap = Screen:scaleBySize(8)
+    local show_return = self.return_enabled == true
+    local button_count = show_return and 3 or 2
+    local button_w = math.max(1, math.floor((info_w - (button_count - 1) * gap) / button_count))
+    local downloaded_path = self.downloaded_path_callback and self.downloaded_path_callback(loan) or nil
+    local locally_available = type(downloaded_path) == "string" and downloaded_path ~= ""
+    local network_ok = self.network_available_callback == nil or self.network_available_callback()
+    local action
+    if locally_available then
+        action = actionButton(_("Open"), button_w, action_h, true, function()
+            if self.open_callback then self.open_callback(downloaded_path) end
+        end)
+    elseif loan.adobe_format and loan.media_type ~= "audiobook" and loan.media_type ~= "magazine" then
+        action = actionButton(_("Download"), button_w, action_h, network_ok, function()
+            if self.download_callback then self.download_callback(loan) end
+        end)
+    else
+        action = outlinedLabel(_("Unsupported"), button_w, action_h)
+    end
+    local actions = HorizontalGroup:new{ align = "center" }
+    table.insert(actions, action)
+    if show_return then
+        table.insert(actions, HorizontalSpan:new{ width = gap })
+        table.insert(actions, actionButton(_("Return"), button_w, action_h, network_ok, function()
+            if self.return_callback then self.return_callback(loan) end
+        end))
+    end
+    table.insert(actions, HorizontalSpan:new{ width = gap })
+    table.insert(actions, actionButton(_("Cancel"), button_w, action_h, true, function()
+        self:hideExpandedDetail()
+    end))
+
+    local info = OverlapGroup:new{
+        dimen = Geom:new{ w = info_w, h = cover_h },
+        metadata,
+        BottomContainer:new{
+            dimen = Geom:new{ w = info_w, h = cover_h },
+            LeftContainer:new{ dimen = Geom:new{ w = info_w, h = action_h }, actions },
+        },
+    }
+    local body = HorizontalGroup:new{ align = "center" }
+    table.insert(body, HorizontalSpan:new{ width = pad })
+    table.insert(body, coverWidget(loan, cover_w, cover_h, path, true))
+    table.insert(body, HorizontalSpan:new{ width = 2 * pad })
+    table.insert(body, info)
+    table.insert(body, HorizontalSpan:new{ width = pad })
+
+    return FrameContainer:new{
+        width = width, height = height, margin = 0, padding = 0,
+        bordersize = Size.border.default, background = Blitbuffer.COLOR_WHITE,
+        CenterContainer:new{ dimen = Geom:new{ w = width, h = height }, body },
+    }
+end
+
 function LibbyCatalog:paginationWidget(width, height)
     local pages = self:pageCount()
     local can_back = self.shelf_page > 1
@@ -711,50 +1236,100 @@ function LibbyCatalog:updateItems()
         self.dimen = Geom:new{ w = self.width, h = self.height }
     end
 
-    local header_height = Screen:scaleBySize(40)
-    local top_height = math.floor(self.height * 0.30)
-    local tabs_height = Screen:scaleBySize(56)
     local footer_height = Screen:scaleBySize(32)
         + 2 * Screen:scaleBySize(4)
         + Screen:scaleBySize(12)
-    local content_height = math.max(
-        Screen:scaleBySize(100),
-        self.height - header_height - top_height - tabs_height - footer_height
-    )
+    local overlap
 
-    local content = VerticalGroup:new{
-        align = "center",
-        self:headerWidget(self.width, header_height),
-        self:heroWidget(self.width, top_height),
-        self:tabsWidget(self.width, tabs_height),
-        self:gridWidget(self.width, content_height),
-    }
-    local main_frame = FrameContainer:new{
-        width = self.width,
-        height = self.height - footer_height,
-        margin = 0,
-        padding = 0,
-        bordersize = 0,
-        background = Blitbuffer.COLOR_WHITE,
-        content,
-    }
-    local overlap = OverlapGroup:new{
-        dimen = Geom:new{ w = self.width, h = self.height },
-        allow_mirroring = false,
-        main_frame,
-    }
-    overlap[#overlap + 1] = BottomContainer:new{
-        dimen = Geom:new{ w = self.width, h = self.height },
-        FrameContainer:new{
+    if self.expanded then
+        local header_height = Screen:scaleBySize(42)
+        local content_height = math.max(Screen:scaleBySize(100), self.height - header_height - footer_height)
+        local shelf = self.expanded_view_mode == "list"
+            and self:expandedListWidget(self.width, content_height)
+            or self:expandedGridWidget(self.width, content_height)
+        local content = VerticalGroup:new{
+            align = "center",
+            self:expandedHeaderWidget(self.width, header_height),
+            shelf,
+        }
+        local main_frame = FrameContainer:new{
             width = self.width,
-            height = footer_height,
+            height = self.height - footer_height,
             margin = 0,
             padding = 0,
             bordersize = 0,
             background = Blitbuffer.COLOR_WHITE,
-            self:paginationWidget(self.width, footer_height),
-        },
-    }
+            content,
+        }
+        overlap = OverlapGroup:new{
+            dimen = Geom:new{ w = self.width, h = self.height },
+            allow_mirroring = false,
+            main_frame,
+        }
+        overlap[#overlap + 1] = BottomContainer:new{
+            dimen = Geom:new{ w = self.width, h = self.height },
+            FrameContainer:new{
+                width = self.width,
+                height = footer_height,
+                margin = 0,
+                padding = 0,
+                bordersize = 0,
+                background = Blitbuffer.COLOR_WHITE,
+                self:expandedPaginationWidget(self.width, footer_height),
+            },
+        }
+        if self.expanded_detail_visible and self:selectedLoan() then
+            local modal_w = math.max(Screen:scaleBySize(360), math.floor(self.width * 0.88))
+            local modal_h = math.max(Screen:scaleBySize(230), math.floor(self.height * 0.40))
+            modal_w = math.min(self.width - Screen:scaleBySize(16), modal_w)
+            modal_h = math.min(self.height - Screen:scaleBySize(16), modal_h)
+            overlap[#overlap + 1] = CenterContainer:new{
+                dimen = Geom:new{ w = self.width, h = self.height },
+                self:expandedDetailWidget(modal_w, modal_h),
+            }
+        end
+    else
+        local header_height = Screen:scaleBySize(40)
+        local top_height = math.floor(self.height * 0.30)
+        local tabs_height = Screen:scaleBySize(56)
+        local content_height = math.max(
+            Screen:scaleBySize(100),
+            self.height - header_height - top_height - tabs_height - footer_height
+        )
+        local content = VerticalGroup:new{
+            align = "center",
+            self:headerWidget(self.width, header_height),
+            self:heroWidget(self.width, top_height),
+            self:tabsWidget(self.width, tabs_height),
+            self:gridWidget(self.width, content_height),
+        }
+        local main_frame = FrameContainer:new{
+            width = self.width,
+            height = self.height - footer_height,
+            margin = 0,
+            padding = 0,
+            bordersize = 0,
+            background = Blitbuffer.COLOR_WHITE,
+            content,
+        }
+        overlap = OverlapGroup:new{
+            dimen = Geom:new{ w = self.width, h = self.height },
+            allow_mirroring = false,
+            main_frame,
+        }
+        overlap[#overlap + 1] = BottomContainer:new{
+            dimen = Geom:new{ w = self.width, h = self.height },
+            FrameContainer:new{
+                width = self.width,
+                height = footer_height,
+                margin = 0,
+                padding = 0,
+                bordersize = 0,
+                background = Blitbuffer.COLOR_WHITE,
+                self:paginationWidget(self.width, footer_height),
+            },
+        }
+    end
 
     DiagnosticLog.log("[catalog] updateItems:old-widget-free:start")
     if self[1] and self[1].free then self[1]:free() end
@@ -774,6 +1349,7 @@ function LibbyCatalog:refreshSnapshot(snapshot, state)
     self.snapshot = snapshot or {}
     self.refresh_state = state
     self.selected_loan_id = nil
+    self.expanded_detail_visible = false
     self:updateItems()
     DiagnosticLog.log("[catalog] refreshSnapshot:end")
 end

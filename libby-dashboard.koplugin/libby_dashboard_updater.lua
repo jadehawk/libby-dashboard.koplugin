@@ -4,6 +4,7 @@ local InfoMessage = require("ui/widget/infomessage")
 local NetworkMgr = require("ui/network/manager")
 local NetworkAction = require("network_action")
 local UpdatePolicy = require("update_policy")
+local Version = require("libby_dashboard_version")
 local UIManager = require("ui/uimanager")
 local lfs = require("libs/libkoreader-lfs")
 local ltn12 = require("ltn12")
@@ -42,19 +43,11 @@ Updater._trustedReleaseUrl = trustedReleaseUrl
 Updater._safeArchivePath = safeArchivePath
 
 local function parseVersion(value)
-    if type(value) ~= "string" then return nil end
-    local major, minor, patch = value:match("^v?(%d+)%.(%d+)%.(%d+)$")
-    if not major then return nil end
-    return tonumber(major), tonumber(minor), tonumber(patch)
+    return Version.parse(value)
 end
 
 function Updater.isNewer(candidate, current)
-    local a, b, c = parseVersion(candidate)
-    local x, y, z = parseVersion(current)
-    if not a or not x then return false end
-    if a ~= x then return a > x end
-    if b ~= y then return b > y end
-    return c > z
+    return Version.is_newer(candidate, current)
 end
 
 local function request(url, sink)

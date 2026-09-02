@@ -10,15 +10,21 @@ ROOT = Path(__file__).resolve().parents[2]
 META_PATH = ROOT / "libby-dashboard.koplugin" / "_meta.lua"
 README_PATH = ROOT / "README.md"
 
-META_VERSION_RE = re.compile(r'^\s*version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"\s*,?\s*$', re.MULTILINE)
-README_VERSION_RE = re.compile(r"^Current plugin version: \*\*[^*]+\*\*$", re.MULTILINE)
+META_VERSION_RE = re.compile(
+    r'^\s*version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?)"\s*,?\s*(?=\n|\Z)',
+    re.MULTILINE,
+)
+README_VERSION_RE = re.compile(
+    r"^Current plugin version: \*\*[^*]+\*\*(?=\n|\Z)",
+    re.MULTILINE,
+)
 
 
 def main() -> None:
     meta = META_PATH.read_text(encoding="utf-8")
     match = META_VERSION_RE.search(meta)
     if not match:
-        raise SystemExit(f"Could not read semantic version from {META_PATH}")
+        raise SystemExit(f"Could not read plugin version from {META_PATH}; expected x.y.z or x.y.z.w")
 
     version = match.group(1)
     readme = README_PATH.read_text(encoding="utf-8")

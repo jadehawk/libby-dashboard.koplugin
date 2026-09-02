@@ -70,12 +70,20 @@ local old_store = storeWith({ book_path_template = "previous-default", adobe_reg
 local old_default = KOReaderController.new{ settings_store = old_store }
 old_default:load()
 assert(old_default.settings.book_path_template == "{title}", "migration 1 must force the current built-in path template")
-assert(old_default.settings.migration_index == 1, "migration 1 must be marked applied")
-assert(old_store.saved and old_store.saved.migration_index == 1, "migration 1 must persist during startup")
+assert(old_default.settings.migration_index == 2, "all current migrations must be marked applied")
+assert(old_store.saved and old_store.saved.migration_index == 2, "latest migration index must persist during startup")
+assert(old_default.settings.libby_expanded_grid_rows == 3, "expanded grid must default to three rows")
 
-local custom = KOReaderController.new{ settings_store = storeWith({ migration_index = 1, book_path_template = "custom-template", adobe_registration = { ok = true } }) }
+local custom = KOReaderController.new{ settings_store = storeWith({ migration_index = 1, book_path_template = "custom-template", libby_expanded_grid_rows = 4, adobe_registration = { ok = true } }) }
 custom:load()
 assert(custom.settings.book_path_template == "custom-template", "an already-migrated custom path must not be reset")
+assert(custom.settings.libby_expanded_grid_rows == 3, "migration 2 must move the previous four-row expanded default to three rows")
+assert(custom.settings.migration_index == 2)
+
+local custom_rows = KOReaderController.new{ settings_store = storeWith({ migration_index = 1, libby_expanded_grid_rows = 5, adobe_registration = { ok = true } }) }
+custom_rows:load()
+assert(custom_rows.settings.libby_expanded_grid_rows == 5, "migration 2 must preserve a non-default custom expanded row count")
+assert(custom_rows.settings.migration_index == 2)
 
 local migrated = KOReaderController.new{ settings_store = storeWith({ cleanup_mode = "dry_run", adobe_registration = { ok = true } }) }
 migrated:load()

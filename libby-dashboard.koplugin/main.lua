@@ -1525,51 +1525,103 @@ function LibbyDashboard:showAdobeSettings()
     UIManager:show(dialog)
 end
 
-function LibbyDashboard:showShelfLayoutSettings(original_columns, original_rows, columns, rows)
-    original_columns = original_columns or tonumber(self.controller.settings.libby_shelf_columns) or 4
-    original_rows = original_rows or tonumber(self.controller.settings.libby_shelf_rows) or 2
-    columns = math.max(2, math.min(8, tonumber(columns) or original_columns))
-    rows = math.max(1, math.min(5, tonumber(rows) or original_rows))
+function LibbyDashboard:showShelfLayoutSettings(original, values)
+    local settings = self.controller.settings
+    local function currentState()
+        return {
+            main_columns = math.max(2, math.min(8, tonumber(settings.libby_shelf_columns) or 4)),
+            main_rows = math.max(1, math.min(5, tonumber(settings.libby_shelf_rows) or 2)),
+            grid_columns = math.max(2, math.min(8, tonumber(settings.libby_expanded_grid_columns) or 4)),
+            grid_rows = math.max(1, math.min(6, tonumber(settings.libby_expanded_grid_rows) or 3)),
+            list_rows = math.max(4, math.min(12, tonumber(settings.libby_expanded_list_rows) or 7)),
+        }
+    end
+    local function copyState(state)
+        return {
+            main_columns = state.main_columns,
+            main_rows = state.main_rows,
+            grid_columns = state.grid_columns,
+            grid_rows = state.grid_rows,
+            list_rows = state.list_rows,
+        }
+    end
 
-    local function preview(next_columns, next_rows)
+    original = original or currentState()
+    values = values or copyState(original)
+
+    local function preview(state)
         if self.catalog_browser and UIManager:isWidgetShown(self.catalog_browser) then
-            self.catalog_browser:setShelfLayout(next_columns, next_rows)
+            self.catalog_browser:setShelfLayout(state.main_columns, state.main_rows)
+            self.catalog_browser:setExpandedLayout(state.grid_columns, state.grid_rows, state.list_rows)
         else
-            self.controller.settings.libby_shelf_columns = next_columns
-            self.controller.settings.libby_shelf_rows = next_rows
+            settings.libby_shelf_columns = state.main_columns
+            settings.libby_shelf_rows = state.main_rows
+            settings.libby_expanded_grid_columns = state.grid_columns
+            settings.libby_expanded_grid_rows = state.grid_rows
+            settings.libby_expanded_list_rows = state.list_rows
         end
     end
 
     local dialog
-    local function change(next_columns, next_rows)
+    local function reopen(next_values)
         UIManager:close(dialog)
-        preview(next_columns, next_rows)
-        self:showShelfLayoutSettings(original_columns, original_rows, next_columns, next_rows)
+        preview(next_values)
+        self:showShelfLayoutSettings(original, next_values)
+    end
+    local function change(key, delta, minimum, maximum)
+        local next_values = copyState(values)
+        next_values[key] = math.max(minimum, math.min(maximum, next_values[key] + delta))
+        reopen(next_values)
     end
 
     dialog = ButtonDialog:new{
-        title = _("Shelf size") .. "\n" .. string.format(_("%d columns × %d rows"), columns, rows),
+        title = _("Shelf size") .. "\n"
+            .. string.format(_("Main %dx%d | Grid %dx%d | List %d"),
+                values.main_columns, values.main_rows,
+                values.grid_columns, values.grid_rows,
+                values.list_rows),
         buttons = {
+            { { text = _("Main UI (Libraries Shelf)"), enabled = false } },
             {
-                { text = "−", enabled = columns > 2, callback = function() change(columns - 1, rows) end },
-                { text = string.format(_("Columns: %d"), columns), enabled = false },
-                { text = "+", enabled = columns < 8, callback = function() change(columns + 1, rows) end },
+                { text = "-", enabled = values.main_columns > 2, callback = function() change("main_columns", -1, 2, 8) end },
+                { text = string.format(_("Columns: %d"), values.main_columns), enabled = false },
+                { text = "+", enabled = values.main_columns < 8, callback = function() change("main_columns", 1, 2, 8) end },
             },
             {
-                { text = "−", enabled = rows > 1, callback = function() change(columns, rows - 1) end },
-                { text = string.format(_("Rows: %d"), rows), enabled = false },
-                { text = "+", enabled = rows < 5, callback = function() change(columns, rows + 1) end },
+                { text = "-", enabled = values.main_rows > 1, callback = function() change("main_rows", -1, 1, 5) end },
+                { text = string.format(_("Rows: %d"), values.main_rows), enabled = false },
+                { text = "+", enabled = values.main_rows < 5, callback = function() change("main_rows", 1, 1, 5) end },
+            },
+            { { text = _("Expanded View - Grid (Book Cards)"), enabled = false } },
+            {
+                { text = "-", enabled = values.grid_columns > 2, callback = function() change("grid_columns", -1, 2, 8) end },
+                { text = string.format(_("Columns: %d"), values.grid_columns), enabled = false },
+                { text = "+", enabled = values.grid_columns < 8, callback = function() change("grid_columns", 1, 2, 8) end },
             },
             {
+                { text = "-", enabled = values.grid_rows > 1, callback = function() change("grid_rows", -1, 1, 6) end },
+                { text = string.format(_("Rows: %d"), values.grid_rows), enabled = false },
+                { text = "+", enabled = values.grid_rows < 6, callback = function() change("grid_rows", 1, 1, 6) end },
+            },
+            { { text = _("Expanded View - List (Book List)"), enabled = false } },
+            {
+                { text = "-", enabled = values.list_rows > 4, callback = function() change("list_rows", -1, 4, 12) end },
+                { text = string.format(_("Rows per page: %d"), values.list_rows), enabled = false },
+                { text = "+", enabled = values.list_rows < 12, callback = function() change("list_rows", 1, 4, 12) end },
+            },
+            {
+                { text = _("Reset Defaults"), callback = function()
+                    reopen({ main_columns = 4, main_rows = 2, grid_columns = 4, grid_rows = 3, list_rows = 7 })
+                end },
                 { text = _("Cancel"), callback = function()
                     UIManager:close(dialog)
-                    preview(original_columns, original_rows)
+                    preview(original)
                     self.controller:save()
                     self:showSettings()
                 end },
-                { text = _("Accept"), callback = function()
+                { text = _("Save"), callback = function()
                     UIManager:close(dialog)
-                    preview(columns, rows)
+                    preview(values)
                     self.controller:save()
                     self:showSettings()
                 end },
