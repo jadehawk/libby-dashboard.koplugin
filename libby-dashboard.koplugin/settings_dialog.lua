@@ -363,18 +363,19 @@ function SettingsDialog.show(plugin, section, original, values)
         }
     end
 
-    local function leaveFor(callback)
-        closeAndRevert()
-        callback()
-    end
-
     local page
     if section == "library" then
         page = shelfPage()
     elseif section == "accounts" then
         page = simplePage(_("Accounts"), _("Manage Libby and Adobe/ByteBooks authentication."), {
-            { text = _("Authentication"), callback = function()
-                leaveFor(function() plugin:showAuthenticationSettings() end)
+            { text = _("Libby Account"), callback = function()
+                plugin:showLibbySettings()
+            end },
+            { text = _("ByteBooks / Adobe Authorization"), callback = function()
+                plugin:showAdobeSettings()
+            end },
+            { text = _("Account Backup & Restore"), callback = function()
+                plugin:showAccountBackupSettings()
             end },
         })
     elseif section == "downloads" then
@@ -383,7 +384,7 @@ function SettingsDialog.show(plugin, section, original, values)
             table.insert(download_buttons, {
                 text = _("Book Storage"),
                 callback = function()
-                    leaveFor(function() plugin:showBookStorageSettings() end)
+                    plugin:showBookStorageSettings()
                 end,
             })
         end
@@ -391,13 +392,12 @@ function SettingsDialog.show(plugin, section, original, values)
     elseif section == "about" then
         page = simplePage(_("About"), _("Libby Dashboard") .. " v" .. plugin.PLUGIN_VERSION, {
             { text = _("Credits"), callback = function()
-                leaveFor(function() plugin:showCredits() end)
+                plugin:showCredits()
             end },
         })
     elseif section == "general" then
         page = simplePage(_("General"), _("Libby Dashboard") .. " v" .. plugin.PLUGIN_VERSION, {
             { text = _("Check for Updates"), callback = function()
-                closeAndRevert()
                 require("libby_dashboard_updater").check(plugin, true)
             end },
         })

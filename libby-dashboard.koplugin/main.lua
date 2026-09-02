@@ -960,7 +960,7 @@ function LibbyDashboard:showCustomBookStorage()
     dialog:onShowKeyboard()
 end
 
-function LibbyDashboard:showBookStorageSettings()
+function LibbyDashboard:showBookStorageSettings(back_callback)
     local current = self.controller.settings.book_path_template or PathTemplate.DEFAULT_TEMPLATE
     local dialog
     local function preset(label, template)
@@ -977,7 +977,7 @@ function LibbyDashboard:showBookStorageSettings()
             preset(_("Library / Author / Title"), "{home}/{library}/{author:first}/{title}.{ext}"),
             preset(_("All books in Home"), "{home}/{title}.{ext}"),
             { { text = _("Custom template…"), callback = function() UIManager:close(dialog); self:showCustomBookStorage() end } },
-            { { text = _("Back"), callback = function() UIManager:close(dialog); self:showSettings("downloads") end } },
+            { { text = _("Back"), callback = function() UIManager:close(dialog); if back_callback then back_callback() end end } },
         },
     }
     UIManager:show(dialog)
@@ -1214,16 +1214,16 @@ function LibbyDashboard:showAuthenticationSettings()
     dialog = ButtonDialog:new{
         title = _("Authentication"),
         buttons = {
-            { { text = _("Libby Account"), callback = function() UIManager:close(dialog); self:showLibbySettings() end } },
-            { { text = _("ByteBooks / Adobe Authorization"), callback = function() UIManager:close(dialog); self:showAdobeSettings() end } },
-            { { text = _("Account Backup & Restore"), callback = function() UIManager:close(dialog); self:showAccountBackupSettings() end } },
+            { { text = _("Libby Account"), callback = function() UIManager:close(dialog); self:showLibbySettings(function() self:showAuthenticationSettings() end) end } },
+            { { text = _("ByteBooks / Adobe Authorization"), callback = function() UIManager:close(dialog); self:showAdobeSettings(function() self:showAuthenticationSettings() end) end } },
+            { { text = _("Account Backup & Restore"), callback = function() UIManager:close(dialog); self:showAccountBackupSettings(function() self:showAuthenticationSettings() end) end } },
             { { text = _("Back"), callback = function() UIManager:close(dialog); self:showSettings("accounts") end } },
         },
     }
     UIManager:show(dialog)
 end
 
-function LibbyDashboard:showAccountBackupSettings()
+function LibbyDashboard:showAccountBackupSettings(back_callback)
     local AccountBackup = require("account_backup")
     local NL = string.char(10)
     local dialog
@@ -1349,13 +1349,13 @@ function LibbyDashboard:showAccountBackupSettings()
         buttons = {
             { { text = _("Export encrypted backup"), callback = function() passwordDialog(false) end } },
             { { text = _("Import account backup"), callback = function() chooseImportBackup() end } },
-            { { text = _("Back"), callback = function() UIManager:close(dialog); self:showAuthenticationSettings() end } },
+            { { text = _("Back"), callback = function() UIManager:close(dialog); if back_callback then back_callback() end end } },
         },
     }
     UIManager:show(dialog)
 end
 
-function LibbyDashboard:showLibbySettings()
+function LibbyDashboard:showLibbySettings(back_callback)
     local dialog
     local authenticated = self.controller:libby_authenticated()
     dialog = ButtonDialog:new{
@@ -1384,7 +1384,7 @@ function LibbyDashboard:showLibbySettings()
                     end,
                 })
             end } },
-            { { text = _("Back"), callback = function() UIManager:close(dialog); self:showAuthenticationSettings() end } },
+            { { text = _("Back"), callback = function() UIManager:close(dialog); if back_callback then back_callback() end end } },
         },
     }
     UIManager:show(dialog)
@@ -1476,7 +1476,7 @@ function LibbyDashboard:showByteBooksLogin()
     end)
 end
 
-function LibbyDashboard:showAdobeSettings()
+function LibbyDashboard:showAdobeSettings(back_callback)
     local dialog
     local summary = self.controller:adobe_summary()
     local status_text = _("Status: not registered")
@@ -1520,7 +1520,7 @@ function LibbyDashboard:showAdobeSettings()
                     end,
                 })
             end } },
-            { { text = _("Back"), callback = function() UIManager:close(dialog); self:showAuthenticationSettings() end } },
+            { { text = _("Back"), callback = function() UIManager:close(dialog); if back_callback then back_callback() end end } },
         },
     }
     UIManager:show(dialog)
