@@ -68,15 +68,14 @@ function SettingsDialog.show(plugin, section, original, values)
     local divider_w = math.max(1, border)
     local dialog_w = math.max(1, screen.w - math.max(scale(18), math.floor(screen.w * 0.07)))
     local header_h = scale(30)
-    local nav_row_h = scale(29)
-    local desired_body_h = math.max(scale(280), nav_row_h * 9 + scale(8))
+    local desired_body_h = scale(304)
     local max_dialog_h = math.max(1, screen.h - math.max(scale(24), math.floor(screen.h * 0.12)))
     local dialog_h = math.min(max_dialog_h, header_h + desired_body_h + 2 * shell_border)
     local dialog_inner_w = math.max(1, dialog_w - 2 * shell_border)
     local dialog_inner_h = math.max(1, dialog_h - 2 * shell_border)
     local body_h = math.max(1, dialog_inner_h - header_h)
-    local nav_w = math.max(scale(100), math.floor(dialog_inner_w * 0.24))
-    nav_w = math.min(math.floor(dialog_inner_w * 0.30), nav_w)
+    local nav_w = math.max(scale(112), math.floor(dialog_inner_w * 0.27))
+    nav_w = math.min(math.floor(dialog_inner_w * 0.33), nav_w)
     local content_w = math.max(1, dialog_inner_w - nav_w - divider_w)
     local page_pad = math.max(scale(7), math.floor(content_w * 0.025))
     local content_inner_w = math.max(1, content_w - 2 * page_pad)
@@ -181,7 +180,7 @@ function SettingsDialog.show(plugin, section, original, values)
 
     local function selector(value, title, key, minimum, maximum, width, height)
         return tapFrame(tostring(value), width, height, {
-            font_size = 13,
+            font_size = 14,
             bordersize = border,
             background = Blitbuffer.COLOR_WHITE,
         }, function()
@@ -190,14 +189,14 @@ function SettingsDialog.show(plugin, section, original, values)
     end
 
     local function settingField(label_text, key, minimum, maximum, label_w, selector_w)
-        local h = scale(28)
+        local h = scale(30)
         return HorizontalGroup:new{
             align = "center",
             LeftContainer:new{
                 dimen = Geom:new{ w = label_w, h = h },
                 TextWidget:new{
                     text = label_text,
-                    face = Font:getFace("smallinfofont", 12),
+                    face = Font:getFace("smallinfofont", 13),
                     max_width = math.max(1, label_w - scale(4)),
                 },
             },
@@ -209,7 +208,7 @@ function SettingsDialog.show(plugin, section, original, values)
         local group = VerticalGroup:new{ align = "left" }
         table.insert(group, TextWidget:new{
             text = title,
-            face = Font:getFace("cfont", 17),
+            face = Font:getFace("cfont", 18),
             bold = true,
             max_width = content_inner_w,
         })
@@ -217,7 +216,7 @@ function SettingsDialog.show(plugin, section, original, values)
             table.insert(group, VerticalSpan:new{ width = scale(1) })
             table.insert(group, TextWidget:new{
                 text = subtitle,
-                face = Font:getFace("smallinfofont", 11),
+                face = Font:getFace("smallinfofont", 12),
                 max_width = content_inner_w,
             })
         end
@@ -227,15 +226,15 @@ function SettingsDialog.show(plugin, section, original, values)
     local function sectionHeading(text)
         return TextWidget:new{
             text = text,
-            face = Font:getFace("cfont", 13),
+            face = Font:getFace("cfont", 14),
             bold = true,
             max_width = content_inner_w,
         }
     end
 
     local function actionButton(text, width, callback, primary)
-        return tapFrame(text, width, scale(31), {
-            font_size = 13,
+        return tapFrame(text, width, scale(33), {
+            font_size = 14,
             bold = true,
             bordersize = border,
             background = primary and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE,
@@ -247,7 +246,7 @@ function SettingsDialog.show(plugin, section, original, values)
     local function shelfPage()
         local top = VerticalGroup:new{ align = "left" }
         table.insert(top, pageHeading(_("Shelf Size (Items per page)"), _("Choose how many items to display in each view.")))
-        table.insert(top, VerticalSpan:new{ width = scale(8) })
+        table.insert(top, VerticalSpan:new{ width = scale(4) })
 
         local selector_w = math.min(scale(54), math.max(scale(46), math.floor(content_inner_w * 0.13)))
         local first_label_w = math.max(scale(108), math.floor(content_inner_w * 0.34))
@@ -259,35 +258,35 @@ function SettingsDialog.show(plugin, section, original, values)
         end
 
         table.insert(top, sectionHeading(_("Main UI (Libraries Shelf)")))
-        table.insert(top, VerticalSpan:new{ width = scale(4) })
+        table.insert(top, VerticalSpan:new{ width = scale(2) })
         table.insert(top, HorizontalGroup:new{
             align = "center",
             settingField(_("Columns (Grid):"), "main_columns", 2, 8, first_label_w, selector_w),
             HorizontalSpan:new{ width = field_gap },
             settingField(_("Rows:"), "main_rows", 1, 5, second_label_w, selector_w),
         })
-        table.insert(top, VerticalSpan:new{ width = scale(10) })
+        table.insert(top, VerticalSpan:new{ width = scale(6) })
 
         table.insert(top, sectionHeading(_("Expanded View - Grid (Book Cards)")))
-        table.insert(top, VerticalSpan:new{ width = scale(4) })
+        table.insert(top, VerticalSpan:new{ width = scale(2) })
         table.insert(top, HorizontalGroup:new{
             align = "center",
             settingField(_("Columns:"), "grid_columns", 2, 8, first_label_w, selector_w),
             HorizontalSpan:new{ width = field_gap },
             settingField(_("Rows:"), "grid_rows", 1, 6, second_label_w, selector_w),
         })
-        table.insert(top, VerticalSpan:new{ width = scale(10) })
+        table.insert(top, VerticalSpan:new{ width = scale(6) })
 
         table.insert(top, sectionHeading(_("Expanded View - List (Book List)")))
-        table.insert(top, VerticalSpan:new{ width = scale(4) })
+        table.insert(top, VerticalSpan:new{ width = scale(2) })
         table.insert(top, settingField(_("Rows per page:"), "list_rows", 4, 12, first_label_w, selector_w))
-        table.insert(top, VerticalSpan:new{ width = scale(14) })
+        table.insert(top, VerticalSpan:new{ width = scale(6) })
 
-        local footer_gap = math.max(scale(18), math.floor(content_inner_w * 0.05))
-        local reset_w = math.max(scale(118), math.floor(content_inner_w * 0.32))
-        local save_w = math.max(scale(86), math.floor(content_inner_w * 0.24))
+        local footer_gap = math.max(scale(12), math.floor(content_inner_w * 0.035))
+        local reset_w = math.max(scale(140), math.floor(content_inner_w * 0.40))
+        local save_w = math.max(scale(82), math.floor(content_inner_w * 0.22))
         if reset_w + save_w + footer_gap > content_inner_w then
-            reset_w = math.max(1, math.floor((content_inner_w - footer_gap) * 0.58))
+            reset_w = math.max(scale(132), math.floor((content_inner_w - footer_gap) * 0.62))
             save_w = math.max(1, content_inner_w - footer_gap - reset_w)
         end
         table.insert(top, CenterContainer:new{
@@ -314,14 +313,21 @@ function SettingsDialog.show(plugin, section, original, values)
             },
         })
 
-        return FrameContainer:new{
-            width = content_w,
-            height = body_h,
-            margin = 0,
-            padding = page_pad,
-            bordersize = 0,
-            background = Blitbuffer.COLOR_WHITE,
-            top,
+        return TopContainer:new{
+            dimen = Geom:new{ w = content_w, h = body_h },
+            FrameContainer:new{
+                width = content_w,
+                height = body_h,
+                margin = 0,
+                padding = 0,
+                padding_top = scale(4),
+                padding_bottom = scale(4),
+                padding_left = page_pad,
+                padding_right = page_pad,
+                bordersize = 0,
+                background = Blitbuffer.COLOR_WHITE,
+                top,
+            },
         }
     end
 
@@ -395,14 +401,6 @@ function SettingsDialog.show(plugin, section, original, values)
                 require("libby_dashboard_updater").check(plugin, true)
             end },
         })
-    elseif section == "sync" then
-        page = simplePage(_("Sync / Network"), _("Network and synchronization preferences."))
-    elseif section == "reading" then
-        page = simplePage(_("Reading"), _("Reading-related Libby Dashboard preferences."))
-    elseif section == "notifications" then
-        page = simplePage(_("Notifications"), _("Notification preferences."))
-    elseif section == "advanced" then
-        page = simplePage(_("Advanced"), _("Advanced Libby Dashboard preferences."))
     else
         page = simplePage(_("General"), _("Libby Dashboard") .. " v" .. plugin.PLUGIN_VERSION)
         section = "general"
@@ -411,28 +409,36 @@ function SettingsDialog.show(plugin, section, original, values)
     local nav_items = {
         { id = "general", text = _("General") },
         { id = "accounts", text = _("Accounts") },
-        { id = "sync", text = _("Sync / Network") },
-        { id = "reading", text = _("Reading") },
         { id = "downloads", text = _("Downloads") },
         { id = "library", text = _("Library / Shelves") },
-        { id = "notifications", text = _("Notifications") },
-        { id = "advanced", text = _("Advanced") },
         { id = "about", text = _("About") },
     }
 
+    local nav_row_h = scale(34)
+    local nav_gap = 0
+    if #nav_items > 1 then
+        nav_gap = math.floor((body_h - nav_row_h * #nav_items - scale(8)) / (#nav_items - 1))
+        nav_gap = math.max(0, math.min(scale(22), nav_gap))
+    end
+    local nav_used_h = nav_row_h * #nav_items + nav_gap * math.max(0, #nav_items - 1)
+    local nav_top_pad = math.max(scale(4), math.floor((body_h - nav_used_h) / 2))
+
     local nav = VerticalGroup:new{ align = "left" }
-    table.insert(nav, VerticalSpan:new{ width = scale(4) })
-    for _, item in ipairs(nav_items) do
+    table.insert(nav, VerticalSpan:new{ width = nav_top_pad })
+    for index, item in ipairs(nav_items) do
         local selected = item.id == section
         table.insert(nav, tapFrame(item.text, nav_w, nav_row_h, {
             align = "left",
-            pad = scale(4),
-            font_size = 14,
+            pad = scale(5),
+            font_size = 15,
             bold = true,
             background = selected and Blitbuffer.COLOR_LIGHT_GRAY or Blitbuffer.COLOR_WHITE,
         }, function()
             if item.id ~= section then reopen(item.id, values, false) end
         end))
+        if index < #nav_items and nav_gap > 0 then
+            table.insert(nav, VerticalSpan:new{ width = nav_gap })
+        end
     end
 
     local nav_frame = TopContainer:new{
