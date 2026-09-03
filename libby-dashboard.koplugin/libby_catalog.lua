@@ -1,5 +1,6 @@
 local Blitbuffer = require("ffi/blitbuffer")
 local DiagnosticLog = require("diagnostic_log")
+local CatalogLayout = require("libby_catalog_layout")
 local Button = require("ui/widget/button")
 local BottomContainer = require("ui/widget/container/bottomcontainer")
 local CenterContainer = require("ui/widget/container/centercontainer")
@@ -37,6 +38,16 @@ local REFRESH_ICON_PATH = plugin_root and (plugin_root .. "/dependencies/icons/r
 local CLOSE_ICON_PATH = plugin_root and (plugin_root .. "/dependencies/icons/close.svg") or nil
 local HOLDS_ICON_PATH = plugin_root and (plugin_root .. "/dependencies/icons/holds.svg") or nil
 local EXPIRES_TODAY_COLOR = Blitbuffer.colorFromName("red")
+
+local TopFirstOverlapGroup = OverlapGroup:extend{}
+
+function TopFirstOverlapGroup:propagateEvent(event)
+    for index = #self, 1, -1 do
+        local widget = self[index]
+        if widget:handleEvent(event) then return true end
+    end
+    return false
+end
 
 local LibbyCatalog = InputContainer:extend{
     name = "libby_catalog",
@@ -1283,14 +1294,31 @@ function LibbyCatalog:expandedPaginationWidget(width, height)
     }
 end
 
-function LibbyCatalog:expandedDetailWidget(width, height)
+function LibbyCatalog:expandedDetailWidget(width, height, tall_portrait)
     local loan = self:selectedLoan()
     if not loan then return nil end
+
     local pad = Size.padding.default
-    local body_h = math.max(1, height)
-    local cover_h = math.max(1, body_h - 2 * pad)
-    local cover_w = math.max(1, math.floor(cover_h * 0.66))
-    local info_w = math.max(1, width - cover_w - 4 * pad)
+    local action_h = Screen:scaleBySize(34)
+    local gap = Screen:scaleBySize(8)
+    local on_hold = loan.on_hold == true
+    local show_return = self.return_enabled == true and loan.extended_loan ~= true and not on_hold
+    local show_delete = loan.extended_loan == true
+    local button_count = (show_return or show_delete) and 3 or 2
+    local geometry = CatalogLayout.expandedDetailGeometry(
+        width,
+        height,
+        pad,
+        action_h,
+        gap,
+        button_count,
+        function(value) return Screen:scaleBySize(value) end,
+        tall_portrait
+    )
+    local cover_w = geometry.cover_width
+    local cover_h = geometry.cover_height
+    local info_w = geometry.info_width
+    local button_w = geometry.button_width
     local path = self.cover_path_callback and self.cover_path_callback(loan) or nil
 
     local metadata = VerticalGroup:new{ align = "left" }
@@ -1315,13 +1343,6 @@ function LibbyCatalog:expandedDetailWidget(width, height)
         (loan.extended_loan == true or loan.on_hold == true) and _("Status: ") or _("Expires On: "), loanTimeText(loan), detail_face, info_w, loanTimeColor(loan), false
     ))
 
-    local action_h = Screen:scaleBySize(34)
-    local gap = Screen:scaleBySize(8)
-    local on_hold = loan.on_hold == true
-    local show_return = self.return_enabled == true and loan.extended_loan ~= true and not on_hold
-    local show_delete = loan.extended_loan == true
-    local button_count = (show_return or show_delete) and 3 or 2
-    local button_w = math.max(1, math.floor((info_w - (button_count - 1) * gap) / button_count))
     local downloaded_path = self.downloaded_path_callback and self.downloaded_path_callback(loan) or nil
     local locally_available = type(downloaded_path) == "string" and downloaded_path ~= ""
     local network_ok = self.network_available_callback == nil or self.network_available_callback()
@@ -1344,6 +1365,7 @@ function LibbyCatalog:expandedDetailWidget(width, height)
     else
         action = outlinedLabel(_("Unsupported"), button_w, action_h)
     end
+
     local actions = HorizontalGroup:new{ align = "center" }
     table.insert(actions, action)
     if show_return then
@@ -1362,26 +1384,56 @@ function LibbyCatalog:expandedDetailWidget(width, height)
         self:hideExpandedDetail()
     end))
 
-    local info = OverlapGroup:new{
-        dimen = Geom:new{ w = info_w, h = cover_h },
-        metadata,
-        BottomContainer:new{
-            dimen = Geom:new{ w = info_w, h = cover_h },
-            LeftContainer:new{ dimen = Geom:new{ w = info_w, h = action_h }, actions },
-        },
-    }
     local body = HorizontalGroup:new{ align = "center" }
     table.insert(body, HorizontalSpan:new{ width = pad })
     table.insert(body, coverWidget(loan, cover_w, cover_h, path, true))
     table.insert(body, HorizontalSpan:new{ width = 2 * pad })
-    table.insert(body, info)
+    table.insert(body, metadata)
     table.insert(body, HorizontalSpan:new{ width = pad })
 
+    local action_band_h = math.max(1, height - geometry.top_height)
     return FrameContainer:new{
         width = width, height = height, margin = 0, padding = 0,
         bordersize = Size.border.default, background = Blitbuffer.COLOR_WHITE,
-        CenterContainer:new{ dimen = Geom:new{ w = width, h = height }, body },
+        VerticalGroup:new{
+            align = "center",
+            CenterContainer:new{
+                dimen = Geom:new{ w = width, h = geometry.top_height },
+                body,
+            },
+            CenterContainer:new{
+                dimen = Geom:new{ w = width, h = action_band_h },
+                actions,
+            },
+        },
     }
+end
+
+function LibbyCatalog:expandedDetailLayer(modal_width, modal_height, tall_portrait)
+    local modal_rect = Geom:new{
+        x = math.floor((self.width - modal_width) / 2),
+        y = math.floor((self.height - modal_height) / 2),
+        w = modal_width,
+        h = modal_height,
+    }
+    local layer = InputContainer:new{
+        dimen = Geom:new{ w = self.width, h = self.height },
+        stop_events_propagation = true,
+        CenterContainer:new{
+            dimen = Geom:new{ w = self.width, h = self.height },
+            self:expandedDetailWidget(modal_width, modal_height, tall_portrait),
+        },
+    }
+    layer.ges_events = {
+        TapDismissExpandedDetail = { GestureRange:new{ ges = "tap", range = layer.dimen } },
+    }
+    layer.onTapDismissExpandedDetail = function(_, ges)
+        if ges and ges.pos and ges.pos:notIntersectWith(modal_rect) then
+            self:hideExpandedDetail()
+        end
+        return true
+    end
+    return layer
 end
 
 function LibbyCatalog:paginationWidget(width, height)
@@ -1459,7 +1511,7 @@ function LibbyCatalog:updateItems()
             background = Blitbuffer.COLOR_WHITE,
             content,
         }
-        overlap = OverlapGroup:new{
+        overlap = TopFirstOverlapGroup:new{
             dimen = Geom:new{ w = self.width, h = self.height },
             allow_mirroring = false,
             main_frame,
@@ -1477,14 +1529,12 @@ function LibbyCatalog:updateItems()
             },
         }
         if self.expanded_detail_visible and self:selectedLoan() then
-            local modal_w = math.max(Screen:scaleBySize(360), math.floor(self.width * 0.88))
-            local modal_h = math.max(Screen:scaleBySize(230), math.floor(self.height * 0.40))
-            modal_w = math.min(self.width - Screen:scaleBySize(16), modal_w)
-            modal_h = math.min(self.height - Screen:scaleBySize(16), modal_h)
-            overlap[#overlap + 1] = CenterContainer:new{
-                dimen = Geom:new{ w = self.width, h = self.height },
-                self:expandedDetailWidget(modal_w, modal_h),
-            }
+            local modal = CatalogLayout.expandedModalGeometry(
+                self.width,
+                self.height,
+                function(value) return Screen:scaleBySize(value) end
+            )
+            overlap[#overlap + 1] = self:expandedDetailLayer(modal.width, modal.height, modal.tall)
         end
     else
         local header_height = Screen:scaleBySize(40)
