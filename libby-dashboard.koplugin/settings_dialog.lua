@@ -1,5 +1,6 @@
 local Blitbuffer = require("ffi/blitbuffer")
 local ButtonDialog = require("ui/widget/buttondialog")
+local CheckButton = require("ui/widget/checkbutton")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
 local Font = require("ui/font")
@@ -11,7 +12,9 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local LineWidget = require("ui/widget/linewidget")
+local PathTemplate = require("path_template")
 local Size = require("ui/size")
+local TextBoxWidget = require("ui/widget/textboxwidget")
 local TextWidget = require("ui/widget/textwidget")
 local TopContainer = require("ui/widget/container/topcontainer")
 local UIManager = require("ui/uimanager")
@@ -29,6 +32,14 @@ local function copyState(state)
         grid_rows = state.grid_rows,
         list_rows = state.list_rows,
     }
+end
+
+local function sameState(a, b)
+    return a.main_columns == b.main_columns
+        and a.main_rows == b.main_rows
+        and a.grid_columns == b.grid_columns
+        and a.grid_rows == b.grid_rows
+        and a.list_rows == b.list_rows
 end
 
 local function currentState(plugin)
@@ -232,15 +243,16 @@ function SettingsDialog.show(plugin, section, original, values)
         }
     end
 
-    local function actionButton(text, width, callback, primary)
+    local function actionButton(text, width, callback, primary, enabled)
+        enabled = enabled ~= false
         return tapFrame(text, width, scale(33), {
             font_size = 14,
             bold = true,
             bordersize = border,
-            background = primary and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE,
-            fgcolor = primary and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK,
+            background = enabled and (primary and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE) or Blitbuffer.COLOR_LIGHT_GRAY,
+            fgcolor = enabled and (primary and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK) or Blitbuffer.COLOR_DARK_GRAY,
             radius = scale(2),
-        }, callback)
+        }, enabled and callback or nil)
     end
 
     local function shelfPage()
@@ -285,6 +297,7 @@ function SettingsDialog.show(plugin, section, original, values)
         local footer_gap = math.max(scale(12), math.floor(content_inner_w * 0.035))
         local reset_w = math.max(scale(140), math.floor(content_inner_w * 0.40))
         local save_w = math.max(scale(82), math.floor(content_inner_w * 0.22))
+        local save_enabled = not sameState(original, values)
         if reset_w + save_w + footer_gap > content_inner_w then
             reset_w = math.max(scale(132), math.floor((content_inner_w - footer_gap) * 0.62))
             save_w = math.max(1, content_inner_w - footer_gap - reset_w)
@@ -309,7 +322,7 @@ function SettingsDialog.show(plugin, section, original, values)
                     local saved = copyState(values)
                     closeDialog()
                     SettingsDialog.show(plugin, "library", saved, copyState(saved))
-                end, true),
+                end, true, save_enabled),
             },
         })
 
@@ -363,6 +376,204 @@ function SettingsDialog.show(plugin, section, original, values)
         }
     end
 
+    local function downloadsPage()
+        local group = VerticalGroup:new{ align = "left" }
+        table.insert(group, pageHeading(_("Downloads"), _("Configure download and storage behavior.")))
+        table.insert(group, VerticalSpan:new{ width = scale(2) })
+
+        local extended_check
+        extended_check = CheckButton:new{
+            text = _("Extended Loan Time"),
+            checked = plugin.controller.settings.extended_loan_time == true,
+            width = content_inner_w,
+            parent = group,
+            face = Font:getFace("cfont", 13),
+            single_line = true,
+            callback = function()
+                plugin.controller:set_extended_loan_time(extended_check.checked)
+                plugin:refreshCatalogFromCache()
+                reopen("downloads", values, false)
+            end,
+        }
+        table.insert(group, extended_check)
+        table.insert(group, TextBoxWidget:new{
+            text = _("Keep downloaded books available after the scheduled loan expiration."),
+            width = content_inner_w,
+            height = scale(28),
+            height_adjust = true,
+            alignment = "left",
+            face = Font:getFace("smallinfofont", 10),
+            height_overflow_show_ellipsis = true,
+        })
+        table.insert(group, VerticalSpan:new{ width = scale(3) })
+        table.insert(group, sectionHeading(_("Book Storage")))
+        table.insert(group, VerticalSpan:new{ width = scale(1) })
+
+        local current = plugin.controller.settings.book_path_template or PathTemplate.DEFAULT_TEMPLATE
+        table.insert(group, TextBoxWidget:new{
+            text = _("Current:") .. " " .. current .. "\n" .. _("Example:") .. " " .. plugin:storagePreview(current),
+            width = content_inner_w,
+            height = scale(52),
+            height_adjust = true,
+            alignment = "left",
+            face = Font:getFace("smallinfofont", 11),
+            height_overflow_show_ellipsis = true,
+        })
+        table.insert(group, VerticalSpan:new{ width = scale(3) })
+
+        local preset_gap = scale(6)
+        local preset_w = math.max(1, math.floor((content_inner_w - preset_gap) / 2))
+        local function presetButton(text, template)
+            return tapFrame(text, preset_w, scale(28), {
+                font_size = 12,
+                bold = true,
+                bordersize = border,
+                background = Blitbuffer.COLOR_WHITE,
+                radius = scale(2),
+            }, function()
+                plugin:applyBookPathTemplate(template, function()
+                    reopen("downloads", values, false)
+                end)
+            end)
+        end
+        table.insert(group, HorizontalGroup:new{
+            align = "center",
+            presetButton(_("Author / Title"), "{home}/{author:first}/{title}.{ext}"),
+            HorizontalSpan:new{ width = preset_gap },
+            presetButton(_("Author / Series / Title"), PathTemplate.DEFAULT_TEMPLATE),
+        })
+        table.insert(group, VerticalSpan:new{ width = scale(4) })
+        table.insert(group, HorizontalGroup:new{
+            align = "center",
+            presetButton(_("Library / Author / Title"), "{home}/{library}/{author:first}/{title}.{ext}"),
+            HorizontalSpan:new{ width = preset_gap },
+            presetButton(_("All books in Home"), "{home}/{title}.{ext}"),
+        })
+        table.insert(group, VerticalSpan:new{ width = scale(4) })
+        table.insert(group, tapFrame(_("Custom template…"), content_inner_w, scale(30), {
+            font_size = 13,
+            bold = true,
+            bordersize = border,
+            background = Blitbuffer.COLOR_WHITE,
+            radius = scale(2),
+        }, function()
+            plugin:showCustomBookStorage(function()
+                reopen("downloads", values, false)
+            end)
+        end))
+
+        return TopContainer:new{
+            dimen = Geom:new{ w = content_w, h = body_h },
+            FrameContainer:new{
+                width = content_w,
+                height = body_h,
+                margin = 0,
+                padding = 0,
+                padding_top = scale(4),
+                padding_bottom = scale(4),
+                padding_left = page_pad,
+                padding_right = page_pad,
+                bordersize = 0,
+                background = Blitbuffer.COLOR_WHITE,
+                group,
+            },
+        }
+    end
+
+    local function developerPage()
+        local group = VerticalGroup:new{ align = "left" }
+        table.insert(group, pageHeading(_("Developer"), _("Developer Mode is enabled.")))
+        table.insert(group, VerticalSpan:new{ width = scale(3) })
+        table.insert(group, sectionHeading(_("Book Storage")))
+        table.insert(group, VerticalSpan:new{ width = scale(1) })
+
+        local current = plugin.controller.settings.book_path_template or PathTemplate.DEFAULT_TEMPLATE
+        table.insert(group, TextBoxWidget:new{
+            text = _("Current:") .. " " .. current .. "\n" .. _("Example:") .. " " .. plugin:storagePreview(current),
+            width = content_inner_w,
+            height = scale(52),
+            height_adjust = true,
+            alignment = "left",
+            face = Font:getFace("smallinfofont", 11),
+            height_overflow_show_ellipsis = true,
+        })
+        table.insert(group, VerticalSpan:new{ width = scale(3) })
+
+        local preset_gap = scale(6)
+        local preset_w = math.max(1, math.floor((content_inner_w - preset_gap) / 2))
+        local function presetButton(text, template)
+            return tapFrame(text, preset_w, scale(28), {
+                font_size = 12,
+                bold = true,
+                bordersize = border,
+                background = Blitbuffer.COLOR_WHITE,
+                radius = scale(2),
+            }, function()
+                plugin:applyBookPathTemplate(template, function()
+                    reopen("developer", values, false)
+                end)
+            end)
+        end
+        table.insert(group, HorizontalGroup:new{
+            align = "center",
+            presetButton(_("Author / Title"), "{home}/{author:first}/{title}.{ext}"),
+            HorizontalSpan:new{ width = preset_gap },
+            presetButton(_("Author / Series / Title"), PathTemplate.DEFAULT_TEMPLATE),
+        })
+        table.insert(group, VerticalSpan:new{ width = scale(4) })
+        table.insert(group, HorizontalGroup:new{
+            align = "center",
+            presetButton(_("Library / Author / Title"), "{home}/{library}/{author:first}/{title}.{ext}"),
+            HorizontalSpan:new{ width = preset_gap },
+            presetButton(_("All books in Home"), "{home}/{title}.{ext}"),
+        })
+        table.insert(group, VerticalSpan:new{ width = scale(4) })
+        table.insert(group, tapFrame(_("Custom template…"), content_inner_w, scale(30), {
+            font_size = 13,
+            bold = true,
+            bordersize = border,
+            background = Blitbuffer.COLOR_WHITE,
+            radius = scale(2),
+        }, function()
+            plugin:showCustomBookStorage(function()
+                reopen("developer", values, false)
+            end)
+        end))
+
+        table.insert(group, VerticalSpan:new{ width = scale(7) })
+        table.insert(group, sectionHeading(_("Developer Mode")))
+        table.insert(group, VerticalSpan:new{ width = scale(1) })
+        table.insert(group, tapFrame(_("Developer Mode / Diagnostics"), content_inner_w, scale(30), {
+            font_size = 13,
+            bold = true,
+            bordersize = border,
+            background = Blitbuffer.COLOR_WHITE,
+            radius = scale(2),
+        }, function()
+            plugin:showCleanupDiagnosticPrompt(function(enabled)
+                reopen(enabled and "developer" or "general", values, false)
+            end)
+        end))
+
+        return TopContainer:new{
+            dimen = Geom:new{ w = content_w, h = body_h },
+            FrameContainer:new{
+                width = content_w,
+                height = body_h,
+                margin = 0,
+                padding = 0,
+                padding_top = scale(4),
+                padding_bottom = scale(4),
+                padding_left = page_pad,
+                padding_right = page_pad,
+                bordersize = 0,
+                background = Blitbuffer.COLOR_WHITE,
+                group,
+            },
+        }
+    end
+
+    local developer_enabled = plugin.controller.settings.developer_mode == true
     local page
     if section == "library" then
         page = shelfPage()
@@ -379,20 +590,15 @@ function SettingsDialog.show(plugin, section, original, values)
             end },
         })
     elseif section == "downloads" then
-        local download_buttons = {}
-        if plugin.controller.settings.cleanup_mode == "dry_run" then
-            table.insert(download_buttons, {
-                text = _("Book Storage"),
-                callback = function()
-                    plugin:showBookStorageSettings()
-                end,
-            })
-        end
-        page = simplePage(_("Downloads"), _("Configure download and storage behavior."), download_buttons)
+        page = downloadsPage()
+    elseif section == "developer" and developer_enabled then
+        page = developerPage()
     elseif section == "about" then
         page = simplePage(_("About"), _("Libby Dashboard") .. " v" .. plugin.PLUGIN_VERSION, {
             { text = _("Credits"), callback = function()
-                plugin:showCredits()
+                plugin:showCredits(function(enabled)
+                    reopen(enabled and "developer" or "about", values, false)
+                end)
             end },
         })
     elseif section == "general" then
@@ -411,8 +617,11 @@ function SettingsDialog.show(plugin, section, original, values)
         { id = "accounts", text = _("Accounts") },
         { id = "downloads", text = _("Downloads") },
         { id = "library", text = _("Library / Shelves") },
-        { id = "about", text = _("About") },
     }
+    if developer_enabled then
+        table.insert(nav_items, { id = "developer", text = _("Developer") })
+    end
+    table.insert(nav_items, { id = "about", text = _("About") })
 
     local nav_row_h = scale(34)
     local nav_gap = 0

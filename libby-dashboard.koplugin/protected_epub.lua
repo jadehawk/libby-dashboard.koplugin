@@ -119,7 +119,7 @@ local function resolveBookKey(path, settings)
     if not rights then error("Could not read ADEPT rights: " .. tostring(readErr)) end
 
     local untilValue = normalizeIsoUtc(xmlText(rights, "until"))
-    if untilValue and os.date("!%Y-%m-%dT%H:%M:%SZ") > untilValue then
+    if settings.extended_loan_time ~= true and untilValue and os.date("!%Y-%m-%dT%H:%M:%SZ") > untilValue then
         error("This library loan has expired")
     end
 

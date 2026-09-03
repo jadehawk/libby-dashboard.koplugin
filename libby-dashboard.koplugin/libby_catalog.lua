@@ -23,6 +23,7 @@ local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
+local util = require("util")
 local _ = require("gettext")
 
 local Screen = Device.screen
@@ -30,6 +31,11 @@ local source_path = debug.getinfo(1, "S").source:gsub("^@", "")
 local plugin_root = source_path:match("^(.*)[/\\]libby_catalog%.lua$")
 local GLOBE_ICON_PATH = plugin_root and (plugin_root .. "/dependencies/icons/globe.svg") or nil
 local GRID_ICON_PATH = plugin_root and (plugin_root .. "/dependencies/icons/view-grid.svg") or nil
+local LIST_ICON_PATH = plugin_root and (plugin_root .. "/dependencies/icons/view-list.svg") or nil
+local SETTINGS_ICON_PATH = plugin_root and (plugin_root .. "/dependencies/icons/settings.svg") or nil
+local REFRESH_ICON_PATH = plugin_root and (plugin_root .. "/dependencies/icons/refresh.svg") or nil
+local CLOSE_ICON_PATH = plugin_root and (plugin_root .. "/dependencies/icons/close.svg") or nil
+local HOLDS_ICON_PATH = plugin_root and (plugin_root .. "/dependencies/icons/holds.svg") or nil
 local EXPIRES_TODAY_COLOR = Blitbuffer.colorFromName("red")
 
 local LibbyCatalog = InputContainer:extend{
@@ -98,6 +104,36 @@ local function actionButton(text, width, height, available, callback)
     return item
 end
 
+local function filterButton(text, width, height, selected, callback)
+    local fg = selected and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
+    local bg = selected and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
+    local label = TextWidget:new{
+        text = text,
+        face = Font:getFace("cfont", 13),
+        bold = true,
+        fgcolor = fg,
+        max_width = math.max(1, width - 2 * Screen:scaleBySize(5)),
+    }
+    local frame = FrameContainer:new{
+        width = width,
+        height = height,
+        margin = 0,
+        padding = 0,
+        bordersize = Size.border.thin,
+        color = Blitbuffer.COLOR_BLACK,
+        background = bg,
+        radius = Size.radius.button,
+        CenterContainer:new{ dimen = Geom:new{ w = width, h = height }, label },
+    }
+    local item = InputContainer:new{ dimen = Geom:new{ w = width, h = height }, frame }
+    item.ges_events = { TapSelect = { GestureRange:new{ ges = "tap", range = item.dimen } } }
+    item.onTapSelect = function()
+        if callback then callback() end
+        return true
+    end
+    return item
+end
+
 local function iconTap(icon, width, height, callback, icon_size, tap_extend_left)
     local size = icon_size or math.floor(height * 0.62)
     local icon_widget
@@ -115,6 +151,35 @@ local function iconTap(icon, width, height, callback, icon_size, tap_extend_left
     }
     local tap_range = tap_extend_left and Geom:new{ x = -width, y = 0, w = width * 2, h = height } or item.dimen
     item.ges_events = { TapSelect = { GestureRange:new{ ges = "tap", range = tap_range } } }
+    item.onTapSelect = function()
+        if callback then callback() end
+        return true
+    end
+    return item
+end
+
+local function filterIconTap(icon, width, height, selected, callback, icon_size)
+    local size = icon_size or math.floor(height * 0.62)
+    local icon_widget
+    if type(icon) == "string" and (icon:find("/", 1, true) or icon:find("\\", 1, true)) then
+        icon_widget = IconWidget:new{ file = icon, width = size, height = size }
+    else
+        icon_widget = IconWidget:new{ icon = icon, width = size, height = size }
+    end
+    local frame = FrameContainer:new{
+        width = width,
+        height = height,
+        margin = 0,
+        padding = 0,
+        bordersize = 0,
+        invert = selected == true,
+        CenterContainer:new{
+            dimen = Geom:new{ w = width, h = height },
+            icon_widget,
+        },
+    }
+    local item = InputContainer:new{ dimen = Geom:new{ w = width, h = height }, frame }
+    item.ges_events = { TapSelect = { GestureRange:new{ ges = "tap", range = item.dimen } } }
     item.onTapSelect = function()
         if callback then callback() end
         return true
@@ -208,7 +273,45 @@ local function safeText(value, max_len)
     return text:sub(1, math.max(1, (max_len or 96) - 3)) .. "..."
 end
 
+local function measureHeaderText(text, face)
+    local probe = TextWidget:new{ text = text, face = face, bold = true }
+    return probe:getSize().w
+end
+
+local function fitExpandedHeaderText(library_name, loan_count, max_width, refreshing)
+    local name = tostring(library_name or "")
+    local suffix = " (" .. tostring(loan_count or 0) .. ")"
+    if refreshing then suffix = suffix .. " — " .. _("Refreshing…") end
+    for _, size in ipairs({ 15, 14, 13 }) do
+        local face = Font:getFace("cfont", size)
+        local text = name .. suffix
+        if measureHeaderText(text, face) <= max_width then return text, face end
+    end
+
+    local face = Font:getFace("cfont", 13)
+    local chars = util.splitToChars(name)
+    local left = math.ceil(#chars / 2)
+    local right = #chars - left
+    while left > 0 or right > 0 do
+        local right_start = #chars - right + 1
+        local left_text = left > 0 and table.concat(chars, "", 1, left) or ""
+        local right_text = right > 0 and table.concat(chars, "", right_start, #chars) or ""
+        local candidate = left_text .. "…" .. right_text .. suffix
+        if measureHeaderText(candidate, face) <= max_width then return candidate, face end
+        if left >= right and left > 0 then
+            left = left - 1
+        elseif right > 0 then
+            right = right - 1
+        else
+            break
+        end
+    end
+    return "…" .. suffix, face
+end
+
 local function loanTimeText(loan)
+    if loan and loan.on_hold == true then return _("On Hold") end
+    if loan and loan.extended_loan == true then return _("Extended Loan") end
     local days = loan and tonumber(loan.days_remaining)
     if days == nil then return _("N/A") end
     if days <= 0 then return _("Expires Today") end
@@ -406,6 +509,7 @@ function LibbyCatalog:init()
     self.shelf_page = math.max(1, tonumber(self.settings.libby_shelf_page) or 1)
     self.expanded = false
     self.expanded_detail_visible = false
+    self.expanded_holds_only = false
     self.expanded_view_mode = self.settings.libby_expanded_view_mode == "list" and "list" or "grid"
     self.expanded_grid_columns = math.max(2, math.min(8, tonumber(self.settings.libby_expanded_grid_columns) or 4))
     self.expanded_grid_rows = math.max(1, math.min(6, tonumber(self.settings.libby_expanded_grid_rows) or 3))
@@ -421,6 +525,13 @@ end
 
 function LibbyCatalog:loansForSelectedCard()
     local loans = type(self.snapshot.loans) == "table" and self.snapshot.loans or {}
+    if self.expanded and self.expanded_holds_only then
+        local holds = {}
+        for _, loan in ipairs(loans) do
+            if loan.on_hold == true then table.insert(holds, loan) end
+        end
+        loans = holds
+    end
     if self.selected_card_id == "__all__" then return loans end
     local filtered = {}
     for _, loan in ipairs(loans) do
@@ -486,6 +597,18 @@ function LibbyCatalog:toggleExpandedView()
     self.expanded_view_mode = self.expanded_view_mode == "grid" and "list" or "grid"
     self.settings.libby_expanded_view_mode = self.expanded_view_mode
     self.expanded_detail_visible = false
+    if self.selection_changed_callback then self.selection_changed_callback() end
+    self:updateItems()
+end
+
+function LibbyCatalog:toggleExpandedHolds()
+    self.expanded_holds_only = not self.expanded_holds_only
+    self.expanded_detail_visible = false
+    self.selected_loan_id = nil
+    self.expanded_grid_page = 1
+    self.expanded_list_page = 1
+    self.settings.libby_expanded_grid_page = 1
+    self.settings.libby_expanded_list_page = 1
     if self.selection_changed_callback then self.selection_changed_callback() end
     self:updateItems()
 end
@@ -611,7 +734,7 @@ function LibbyCatalog:heroWidget(width, height)
     if not loan then
         return CenterContainer:new{
             dimen = Geom:new{ w = width, h = height },
-            TextWidget:new{ text = _("No loans in this library."), face = Font:getFace("infofont") },
+            TextWidget:new{ text = _("No borrowed or held titles in this library."), face = Font:getFace("infofont") },
         }
     end
 
@@ -639,7 +762,7 @@ function LibbyCatalog:heroWidget(width, height)
         { label = _("Series Index: "), value = safeText(loan.series_index ~= nil and tostring(loan.series_index) or _("N/A"), 40) },
         { label = _("Format: "), value = mediaLabel(loan) },
         { label = _("Library: "), value = safeText(loan.library or _("N/A"), 100) },
-        { label = _("Expires On: "), value = loanTimeText(loan), fgcolor = loanTimeColor(loan) },
+        { label = (loan.extended_loan == true or loan.on_hold == true) and _("Status: ") or _("Expires On: "), value = loanTimeText(loan), fgcolor = loanTimeColor(loan) },
     }
     for _, row in ipairs(metadata_rows) do
         if row.fgcolor then
@@ -674,7 +797,12 @@ function LibbyCatalog:heroWidget(width, height)
     local downloaded_path = self.downloaded_path_callback and self.downloaded_path_callback(loan) or nil
     local locally_available = type(downloaded_path) == "string" and downloaded_path ~= ""
     local network_ok = self.network_available_callback == nil or self.network_available_callback()
-    if locally_available then
+    local extended = loan.extended_loan == true
+    local on_hold = loan.on_hold == true
+    if on_hold then
+        action_text = _("Cancel Hold")
+        downloadable = false
+    elseif locally_available then
         action_text = _("Open")
     elseif loan.media_type == "audiobook" or loan.media_type == "magazine" or not loan.adobe_format then
         action_text = _("Unsupported")
@@ -682,15 +810,24 @@ function LibbyCatalog:heroWidget(width, height)
     else
         action_text = _("Download")
     end
+    if extended and not locally_available then
+        action_text = _("Unavailable")
+        downloadable = false
+    end
 
     local action_h = Screen:scaleBySize(34)
-    local show_return = self.return_enabled == true
+    local show_return = self.return_enabled == true and not extended and not on_hold
+    local show_delete = extended
     local min_gap = Screen:scaleBySize(8)
-    local button_w = show_return
+    local button_w = (show_return or show_delete)
         and math.max(1, math.floor((text_w - min_gap) / 2))
         or math.min(text_w, Screen:scaleBySize(150))
     local action
-    if locally_available then
+    if on_hold then
+        action = actionButton(action_text, button_w, action_h, network_ok, function()
+            if self.cancel_hold_callback then self.cancel_hold_callback(loan) end
+        end)
+    elseif locally_available then
         action = actionButton(action_text, button_w, action_h, true, function()
             if self.open_callback then self.open_callback(downloaded_path) end
         end)
@@ -712,6 +849,16 @@ function LibbyCatalog:heroWidget(width, height)
             action,
             HorizontalSpan:new{ width = math.max(min_gap, text_w - 2 * button_w) },
             return_action,
+        }
+    elseif show_delete then
+        local delete_action = actionButton(_("Delete"), button_w, action_h, true, function()
+            if self.delete_callback then self.delete_callback(loan) end
+        end)
+        action_row = HorizontalGroup:new{
+            align = "center",
+            action,
+            HorizontalSpan:new{ width = math.max(min_gap, text_w - 2 * button_w) },
+            delete_action,
         }
     end
     local info = OverlapGroup:new{
@@ -743,7 +890,7 @@ function LibbyCatalog:headerWidget(width, height)
     local chrome_icon = math.min(Screen:scaleBySize(32), math.max(1, height - Screen:scaleBySize(8)))
     local refresh_icon = math.min(Screen:scaleBySize(26), math.max(1, height - Screen:scaleBySize(12)))
     local row = HorizontalGroup:new{ align = "center" }
-    table.insert(row, hamburgerTap(button_w, height, function()
+    table.insert(row, iconTap(SETTINGS_ICON_PATH or "appbar.settings", button_w, height, function()
         if self.settings_callback then self.settings_callback() end
     end))
 
@@ -755,12 +902,12 @@ function LibbyCatalog:headerWidget(width, height)
         max_width = math.max(1, middle_w - height - Screen:scaleBySize(8)),
     })
     table.insert(center, HorizontalSpan:new{ width = Screen:scaleBySize(6) })
-    table.insert(center, iconTap("cre.render.reload", height, height, function()
+    table.insert(center, iconTap(REFRESH_ICON_PATH or "cre.render.reload", height, height, function()
         if self.refresh_state ~= "refreshing" and self.refresh_callback then self.refresh_callback() end
     end, refresh_icon))
     table.insert(row, CenterContainer:new{ dimen = Geom:new{ w = middle_w, h = height }, center })
     table.insert(row, wifiStatusWidget(wifi_w, height))
-    table.insert(row, iconTap("close", button_w, height, function()
+    table.insert(row, iconTap(CLOSE_ICON_PATH or "close", button_w, height, function()
         if self.close_callback then self.close_callback() else UIManager:close(self) end
     end, chrome_icon))
     return row
@@ -813,15 +960,39 @@ function LibbyCatalog:tabsWidget(width, height)
     local row = HorizontalGroup:new{ align = "center" }
     local count = math.max(1, #tabs)
     local tab_w = math.floor((width - 2 * Size.border.thin) / count)
+    local tab_font_size = 15
+    local tab_text_w = math.max(1, tab_w - 2 * Screen:scaleBySize(8))
+    local tab_face = Font:getFace("cfont", tab_font_size)
+    local function fitTabLabel(tab, selected)
+        local suffix = " (" .. tostring(tab.count or 0) .. ")"
+        local name = tostring(tab.name or "")
+        local label = name .. suffix
+        local function fits(text)
+            return TextWidget:new{
+                text = text,
+                face = tab_face,
+                bold = selected,
+            }:getSize().w <= tab_text_w
+        end
+        if fits(label) then return label end
+
+        local chars = util.splitToChars(name)
+        for keep = #chars, 1, -1 do
+            local candidate = table.concat(chars, "", 1, keep) .. "…" .. suffix
+            if fits(candidate) then return candidate end
+        end
+        return suffix
+    end
     for _, tab in ipairs(tabs) do
         local selected = tostring(self.selected_card_id) == tostring(tab.id)
+        local tab_label = fitTabLabel(tab, selected)
         table.insert(row, tappableFrame(
-            safeText(tab.name, 13) .. " (" .. tostring(tab.count) .. ")",
+            tab_label,
             tab_w,
             tabs_h,
             selected,
             function() self:selectCard(tab.id) end,
-            17
+            15
         ))
     end
     return VerticalGroup:new{
@@ -836,7 +1007,7 @@ function LibbyCatalog:gridWidget(width, height)
     if #loans == 0 then
         return CenterContainer:new{
             dimen = Geom:new{ w = width, h = height },
-            TextWidget:new{ text = _("No borrowed titles to display."), face = Font:getFace("infofont") },
+            TextWidget:new{ text = _("No borrowed or held titles to display."), face = Font:getFace("infofont") },
         }
     end
 
@@ -888,27 +1059,41 @@ end
 function LibbyCatalog:expandedHeaderWidget(width, height)
     local library_name, loan_count = self:selectedLibraryInfo()
     local icon_w = height
-    local title_w = math.max(1, width - 3 * icon_w)
+    local title_w = math.max(1, width - 5 * icon_w)
+    local title_text_w = math.max(1, title_w - Screen:scaleBySize(12))
     local icon_size = math.min(Screen:scaleBySize(26), math.max(1, height - Screen:scaleBySize(10)))
+    local title_text, title_face = fitExpandedHeaderText(
+        library_name, loan_count, title_text_w, self.refresh_state == "refreshing"
+    )
+
     local row = HorizontalGroup:new{ align = "center" }
+    table.insert(row, iconTap(SETTINGS_ICON_PATH or "appbar.settings", icon_w, height, function()
+        if self.settings_callback then self.settings_callback() end
+    end, icon_size))
     table.insert(row, CenterContainer:new{
         dimen = Geom:new{ w = title_w, h = height },
         LeftContainer:new{
-            dimen = Geom:new{ w = math.max(1, title_w - Screen:scaleBySize(12)), h = height },
+            dimen = Geom:new{ w = title_text_w, h = height },
             TextWidget:new{
-                text = _("Library: ") .. tostring(library_name) .. " (" .. tostring(loan_count) .. ")",
-                face = Font:getFace("cfont", 15),
+                text = title_text,
+                face = title_face,
                 bold = true,
-                max_width = math.max(1, title_w - Screen:scaleBySize(12)),
+                max_width = title_text_w,
             },
         },
     })
-    table.insert(row, iconTap("cre.render.reload", icon_w, height, function()
+    table.insert(row, CenterContainer:new{
+        dimen = Geom:new{ w = icon_w, h = height },
+        filterIconTap(HOLDS_ICON_PATH or "bookmark", icon_w, height, self.expanded_holds_only, function()
+            self:toggleExpandedHolds()
+        end),
+    })
+    table.insert(row, iconTap(REFRESH_ICON_PATH or "cre.render.reload", icon_w, height, function()
         if self.refresh_state ~= "refreshing" and self.refresh_callback then self.refresh_callback() end
     end, icon_size))
-    local toggle_icon = self.expanded_view_mode == "grid" and "appbar.menu" or (GRID_ICON_PATH or "column.two")
+    local toggle_icon = self.expanded_view_mode == "grid" and (LIST_ICON_PATH or "appbar.menu") or (GRID_ICON_PATH or "column.two")
     table.insert(row, iconTap(toggle_icon, icon_w, height, function() self:toggleExpandedView() end, icon_size))
-    table.insert(row, iconTap("close", icon_w, height, function() self:closeExpanded() end, icon_size))
+    table.insert(row, iconTap(CLOSE_ICON_PATH or "close", icon_w, height, function() self:closeExpanded() end, icon_size))
     return FrameContainer:new{
         width = width, height = height, margin = 0, padding = 0,
         bordersize = Size.border.thin, background = Blitbuffer.COLOR_WHITE,
@@ -921,7 +1106,7 @@ function LibbyCatalog:expandedGridWidget(width, height)
     if #loans == 0 then
         return CenterContainer:new{
             dimen = Geom:new{ w = width, h = height },
-            TextWidget:new{ text = _("No borrowed titles to display."), face = Font:getFace("infofont") },
+            TextWidget:new{ text = _("No borrowed or held titles to display."), face = Font:getFace("infofont") },
         }
     end
 
@@ -986,7 +1171,7 @@ function LibbyCatalog:expandedListWidget(width, height)
     if #loans == 0 then
         return CenterContainer:new{
             dimen = Geom:new{ w = width, h = height },
-            TextWidget:new{ text = _("No borrowed titles to display."), face = Font:getFace("infofont") },
+            TextWidget:new{ text = _("No borrowed or held titles to display."), face = Font:getFace("infofont") },
         }
     end
 
@@ -1128,22 +1313,31 @@ function LibbyCatalog:expandedDetailWidget(width, height)
         })
     end
     table.insert(metadata, alignedColorValueRow(
-        _("Expires On: "), loanTimeText(loan), detail_face, info_w, loanTimeColor(loan), false
+        (loan.extended_loan == true or loan.on_hold == true) and _("Status: ") or _("Expires On: "), loanTimeText(loan), detail_face, info_w, loanTimeColor(loan), false
     ))
 
     local action_h = Screen:scaleBySize(34)
     local gap = Screen:scaleBySize(8)
-    local show_return = self.return_enabled == true
-    local button_count = show_return and 3 or 2
+    local on_hold = loan.on_hold == true
+    local show_return = self.return_enabled == true and loan.extended_loan ~= true and not on_hold
+    local show_delete = loan.extended_loan == true
+    local button_count = (show_return or show_delete) and 3 or 2
     local button_w = math.max(1, math.floor((info_w - (button_count - 1) * gap) / button_count))
     local downloaded_path = self.downloaded_path_callback and self.downloaded_path_callback(loan) or nil
     local locally_available = type(downloaded_path) == "string" and downloaded_path ~= ""
     local network_ok = self.network_available_callback == nil or self.network_available_callback()
+    local extended = loan.extended_loan == true
     local action
-    if locally_available then
+    if on_hold then
+        action = actionButton(_("Cancel Hold"), button_w, action_h, network_ok, function()
+            if self.cancel_hold_callback then self.cancel_hold_callback(loan) end
+        end)
+    elseif locally_available then
         action = actionButton(_("Open"), button_w, action_h, true, function()
             if self.open_callback then self.open_callback(downloaded_path) end
         end)
+    elseif extended then
+        action = outlinedLabel(_("Unavailable"), button_w, action_h)
     elseif loan.adobe_format and loan.media_type ~= "audiobook" and loan.media_type ~= "magazine" then
         action = actionButton(_("Download"), button_w, action_h, network_ok, function()
             if self.download_callback then self.download_callback(loan) end
@@ -1157,6 +1351,11 @@ function LibbyCatalog:expandedDetailWidget(width, height)
         table.insert(actions, HorizontalSpan:new{ width = gap })
         table.insert(actions, actionButton(_("Return"), button_w, action_h, network_ok, function()
             if self.return_callback then self.return_callback(loan) end
+        end))
+    elseif show_delete then
+        table.insert(actions, HorizontalSpan:new{ width = gap })
+        table.insert(actions, actionButton(_("Delete"), button_w, action_h, true, function()
+            if self.delete_callback then self.delete_callback(loan) end
         end))
     end
     table.insert(actions, HorizontalSpan:new{ width = gap })

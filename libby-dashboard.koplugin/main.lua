@@ -844,8 +844,10 @@ function LibbyDashboard:coverCacheDir()
 end
 
 function LibbyDashboard:coverCachePath(loan)
-    if type(loan) ~= "table" or not loan.cover_url then return nil end
-    local key = tostring(loan.id or loan.title or loan.cover_url):gsub("[^%w%-_]", "_")
+    if type(loan) ~= "table" then return nil end
+    local cache_key = loan.id or loan.title or loan.cover_url
+    if cache_key == nil then return nil end
+    local key = tostring(cache_key):gsub("[^%w%-_]", "_")
     local path = self:coverCacheDir() .. "/" .. key .. ".jpg"
     local file = io.open(path, "rb")
     if file then
@@ -918,19 +920,20 @@ function LibbyDashboard:storagePreview(template)
     })
 end
 
-function LibbyDashboard:applyBookPathTemplate(template)
+function LibbyDashboard:applyBookPathTemplate(template, applied_callback)
     local ok, err = self.controller:set_book_path_template(template)
     if not ok then
         UIManager:show(InfoMessage:new{ text = _("Invalid destination template:") .. "\n\n" .. tostring(err) })
         return
     end
+    if applied_callback then applied_callback(template) end
     UIManager:show(InfoMessage:new{
         text = _("Book destination updated.") .. "\n\n" .. tostring(template)
             .. "\n\n" .. _("Example:") .. "\n" .. self:storagePreview(template),
     })
 end
 
-function LibbyDashboard:showCustomBookStorage()
+function LibbyDashboard:showCustomBookStorage(applied_callback)
     local current = self.controller.settings.book_path_template or PathTemplate.DEFAULT_TEMPLATE
     local dialog
     dialog = MultiInputDialog:new{
@@ -951,7 +954,7 @@ function LibbyDashboard:showCustomBookStorage()
                         return
                     end
                     UIManager:close(dialog)
-                    self:applyBookPathTemplate(value)
+                    self:applyBookPathTemplate(value, applied_callback)
                 end },
             },
         },
@@ -1088,7 +1091,7 @@ function LibbyDashboard:refreshBrowserSnapshot(browser)
                 end)
                 DiagnosticLog.log("[refresh] reconcile:end")
                 DiagnosticLog.log("[refresh] browser-refresh:start")
-                browser:refreshSnapshot(refreshed, "live")
+                browser:refreshSnapshot(self.controller:catalog_snapshot(refreshed), "live")
                 DiagnosticLog.log("[refresh] browser-refresh:end")
                 DiagnosticLog.log("[refresh] cover-prefetch:start")
                 self:prefetchBrowserCovers(browser)
@@ -1126,6 +1129,61 @@ function LibbyDashboard:scheduleBrowserRefresh(browser)
     UIManager:scheduleIn(300, tick)
 end
 
+function LibbyDashboard:refreshCatalogFromCache()
+    if not self.catalog_browser then return end
+    local snapshot = self.controller:catalog_snapshot(self.controller:cached_libby_snapshot() or {})
+    self.catalog_browser:refreshSnapshot(snapshot, "local")
+end
+
+function LibbyDashboard:deleteExtendedLoan(loan)
+    if type(loan) ~= "table" then return end
+    local record = self.controller:downloaded_loan(loan.id)
+    if type(record) ~= "table" then
+        self:refreshCatalogFromCache()
+        return
+    end
+    local title = tostring(loan.title or record.title or _("this book"))
+    UIManager:show(ConfirmBox:new{
+        text = string.format(_("Delete the downloaded copy of '%s'?\n\nThe Libby loan is not changed. Reading history, notes, annotations, and progress will be preserved."), title),
+        ok_text = _("Delete"),
+        ok_callback = function()
+            local removed = self:removeTrackedBook(record)
+            if removed == false and lfs.attributes(record.path or "") then
+                UIManager:show(InfoMessage:new{ text = _("Could not delete the downloaded book.") })
+                return
+            end
+            local saved, err = self.controller:delete_downloaded_loan(loan.id)
+            if not saved then
+                UIManager:show(InfoMessage:new{ text = _("Could not update downloaded-book tracking: ") .. tostring(err or _("unknown error")) })
+                return
+            end
+            self:refreshCatalogFromCache()
+            UIManager:show(InfoMessage:new{ text = _("Downloaded book deleted. Reading history was preserved.") })
+        end,
+    })
+end
+
+function LibbyDashboard:cancelHold(hold)
+    DiagnosticLog.log("[hold] cancel:requested")
+    if type(hold) ~= "table" then return end
+    local title = tostring(hold.title or _("this title"))
+    UIManager:show(ConfirmBox:new{
+        text = string.format(_("Cancel hold on '%s'?"), title),
+        ok_text = _("Cancel Hold"),
+        ok_callback = function()
+            self:runNetworkAction(function()
+                local ok, err = self.controller:cancel_hold(hold)
+                if not ok then
+                    UIManager:show(InfoMessage:new{ text = _("Could not cancel hold: ") .. tostring(err or _("unknown error")) })
+                    return
+                end
+                if self.catalog_browser then self:refreshBrowserSnapshot(self.catalog_browser) end
+                UIManager:show(InfoMessage:new{ text = _("Hold cancelled.") })
+            end)
+        end,
+    })
+end
+
 function LibbyDashboard:returnLoan(loan)
     DiagnosticLog.log("[loan] return:requested")
     if type(loan) ~= "table" then return end
@@ -1134,10 +1192,22 @@ function LibbyDashboard:returnLoan(loan)
         return
     end
     local title = tostring(loan.title or _("this book"))
+    local keep_local = self.controller.settings.extended_loan_time == true
+        and type(self.controller:downloaded_loan(loan.id)) == "table"
+    local confirm_text = keep_local
+        and string.format(_("Return '%s' early?\n\nThis returns the loan to Libby and keeps the downloaded book on this device as an Extended Loan. Reading history will be preserved."), title)
+        or string.format(_("Return '%s' early?\n\nThis returns the loan to Libby and removes the downloaded book from this device. Reading history will be preserved."), title)
     UIManager:show(ConfirmBox:new{
-        text = string.format(_("Return '%s' early?\n\nThis returns the loan to Libby and removes the downloaded book from this device. Reading history will be preserved."), title),
+        text = confirm_text,
         ok_text = _("Return"),
         ok_callback = function()
+            if keep_local then
+                local metadata_ok, metadata_err = self.controller:refresh_downloaded_loan_metadata(loan)
+                if not metadata_ok then
+                    UIManager:show(InfoMessage:new{ text = _("Could not preserve Extended Loan metadata: ") .. tostring(metadata_err or _("unknown error")) })
+                    return
+                end
+            end
             self:runNetworkAction(function()
             local ok, err = self.controller:return_loan(loan)
             if not ok then
@@ -1145,7 +1215,7 @@ function LibbyDashboard:returnLoan(loan)
                 return
             end
             if self.catalog_browser then self:refreshBrowserSnapshot(self.catalog_browser) end
-            UIManager:show(InfoMessage:new{ text = _("Loan returned to Libby.") })
+            UIManager:show(InfoMessage:new{ text = keep_local and _("Loan returned to Libby. Download retained as an Extended Loan.") or _("Loan returned to Libby.") })
             end)
         end,
     })
@@ -1157,7 +1227,7 @@ function LibbyDashboard:showBrowser()
     self._automatic_update_check_done = false
 
     self.catalog_browser = LibbyCatalog:new{
-        snapshot = self.controller:cached_libby_snapshot() or {},
+        snapshot = self.controller:catalog_snapshot(self.controller:cached_libby_snapshot() or {}),
         settings = self.controller.settings,
         _manager = self,
         download_callback = function(loan)
@@ -1165,6 +1235,12 @@ function LibbyDashboard:showBrowser()
         end,
         return_callback = function(loan)
             self:returnLoan(loan)
+        end,
+        cancel_hold_callback = function(hold)
+            self:cancelHold(hold)
+        end,
+        delete_callback = function(loan)
+            self:deleteExtendedLoan(loan)
         end,
         return_enabled = self.controller.settings.developer_mode ~= true,
         downloaded_path_callback = function(loan)
@@ -1530,7 +1606,7 @@ function LibbyDashboard:showShelfLayoutSettings(original, values)
     self:showSettings("library", original, values)
 end
 
-function LibbyDashboard:showCleanupDiagnosticPrompt()
+function LibbyDashboard:showCleanupDiagnosticPrompt(state_callback)
     local dialog
     dialog = MultiInputDialog:new{
         title = _("Diagnostics"),
@@ -1560,6 +1636,7 @@ function LibbyDashboard:showCleanupDiagnosticPrompt()
                         self.catalog_browser:updateItems()
                     end
                     UIManager:close(dialog)
+                    if state_callback then state_callback(enabled) end
                     UIManager:show(InfoMessage:new{
                         text = (enabled
                             and _("Developer mode enabled. New EPUB downloads will be saved decrypted, and loan cleanup will run in dry-run mode.")
@@ -1573,7 +1650,7 @@ function LibbyDashboard:showCleanupDiagnosticPrompt()
     UIManager:show(dialog)
 end
 
-function LibbyDashboard:showCredits()
+function LibbyDashboard:showCredits(state_callback)
     -- Long-pressing the final word "above" reveals the hidden developer entry point.
     local credits = [[
 # Libby Dashboard for KOReader
@@ -1610,7 +1687,7 @@ Libby Dashboard for KOReader is an independent personal project and is not affil
         text_selection_callback = function(text)
             if koUtil.trim(text or ""):lower():gsub("[%p]+$", "") == "above" then
                 UIManager:close(viewer)
-                self:showCleanupDiagnosticPrompt()
+                self:showCleanupDiagnosticPrompt(state_callback)
             end
         end,
     }

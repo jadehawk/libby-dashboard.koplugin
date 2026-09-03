@@ -277,6 +277,27 @@ function LibbyClient:return_loan(card_id, loan_id)
     return true
 end
 
+function LibbyClient:cancel_hold(card_id, title_id)
+    if card_id == nil or tostring(card_id) == "" then return nil, "Hold card id is missing" end
+    if title_id == nil or tostring(title_id) == "" then return nil, "Hold title id is missing" end
+
+    local path = "/card/" .. tostring(card_id) .. "/hold/" .. tostring(title_id)
+    local response, err = self:_request("DELETE", path, { identity = self.identity })
+    if not response then return nil, err end
+
+    if response.status == 403 and response_result(response) == "missing_chip" then
+        local refreshed, refresh_err = self:get_chip(true, true)
+        if not refreshed then return nil, refresh_err end
+        response, err = self:_request("DELETE", path, { identity = self.identity })
+        if not response then return nil, err end
+    end
+
+    if response.status < 200 or response.status >= 300 then
+        return nil, "Libby cancel hold failed with HTTP " .. tostring(response.status)
+    end
+    return true
+end
+
 function LibbyClient:sync()
     local response, err = self:_request("GET", "/chip/sync", {
         identity = self.identity,

@@ -34,6 +34,7 @@ local DEFAULTS = {
     libby_identity = nil,
     downloaded_loans = {},
     cleanup_mode = "normal",
+    extended_loan_time = true,
     developer_mode = false,
     adobe_registration = nil,
 }
@@ -155,6 +156,11 @@ function KOReaderController:reset_book_path_template()
     return self:save()
 end
 
+function KOReaderController:set_extended_loan_time(enabled)
+    self.settings.extended_loan_time = enabled == true
+    return self:save()
+end
+
 function KOReaderController:book_destination(model, ext)
     return KOReaderStorage.destination(self.settings.book_path_template, model, {
         reader_settings = self.reader_settings,
@@ -213,6 +219,16 @@ function KOReaderController:return_loan(loan)
     return client:return_loan(loan.card_id, loan.id)
 end
 
+function KOReaderController:cancel_hold(hold)
+    DiagnosticLog.log("[controller] cancel_hold:start")
+    if type(hold) ~= "table" then return nil, "Hold is missing" end
+    if hold.card_id == nil or tostring(hold.card_id) == "" then return nil, "Hold card id is missing" end
+    if hold.id == nil or tostring(hold.id) == "" then return nil, "Hold title id is missing" end
+    local client, client_err = self:libby_client()
+    if not client then return nil, client_err end
+    return client:cancel_hold(hold.card_id, hold.id)
+end
+
 function KOReaderController:download_loan_acsm(loan)
     if type(loan) ~= "table" then return nil, "Loan is missing" end
     if not loan.adobe_format then return nil, "This loan has no Adobe EPUB/PDF format" end
@@ -235,6 +251,26 @@ function KOReaderController:normalize_libby_state(state)
         table.insert(cards, {
             id = card.id or card.cardId,
             name = LoanModel.card_name(card),
+            hold_count = type(card.counts) == "table" and tonumber(card.counts.hold) or nil,
+            hold_limit = type(card.limits) == "table" and tonumber(card.limits.hold) or nil,
+        })
+    end
+
+    local holds = {}
+    for _, hold in ipairs(LoanModel.list(state.holds or {}, state.cards or {})) do
+        table.insert(holds, {
+            id = hold.id,
+            card_id = hold.card_id,
+            title = hold.title,
+            author = hold.author,
+            authors = hold.authors,
+            series = hold.series,
+            series_index = hold.series_index,
+            library = hold.library,
+            media_type = hold.media_type,
+            non_adobe_format_label = hold.non_adobe_format_label,
+            cover_url = hold.cover_url,
+            on_hold = true,
         })
     end
 
@@ -262,6 +298,7 @@ function KOReaderController:normalize_libby_state(state)
         updated_at = os.time(),
         cards = cards,
         loans = loans,
+        holds = holds,
     }
 end
 
@@ -284,6 +321,13 @@ function KOReaderController:track_downloaded_loan(loan, path)
         library = loan.library,
         path = path,
         format = path:match("%.([^./]+)$"),
+        authors = loan.authors,
+        series = loan.series,
+        series_index = loan.series_index,
+        adobe_format = loan.adobe_format,
+        media_type = loan.media_type,
+        non_adobe_format_label = loan.non_adobe_format_label,
+        cover_url = loan.cover_url,
         downloaded_at = os.time(),
         expires_at = loan.expires_at,
     }
@@ -296,6 +340,90 @@ function KOReaderController:downloaded_loan(loan_id)
     return records[tostring(loan_id)]
 end
 
+function KOReaderController:refresh_downloaded_loan_metadata(loan)
+    if type(loan) ~= "table" or loan.id == nil then return nil, "Loan id is missing" end
+    local record = self:downloaded_loan(loan.id)
+    if type(record) ~= "table" then return true end
+
+    local changed = false
+    local fields = {
+        "card_id", "title", "author", "authors", "series", "series_index", "library",
+        "adobe_format", "media_type", "non_adobe_format_label", "cover_url", "expires_at",
+    }
+    for _, field in ipairs(fields) do
+        local value = loan[field]
+        if value ~= nil and record[field] ~= value then
+            record[field] = value
+            changed = true
+        end
+    end
+    if not changed then return true end
+    return self:save()
+end
+
+function KOReaderController:delete_downloaded_loan(loan_id)
+    if loan_id == nil then return nil, "Loan id is missing" end
+    local records = self.settings.downloaded_loans
+    if type(records) ~= "table" then return true end
+    records[tostring(loan_id)] = nil
+    return self:save()
+end
+
+function KOReaderController:catalog_snapshot(snapshot)
+    snapshot = type(snapshot) == "table" and snapshot or {}
+
+    local merged = {}
+    for key, value in pairs(snapshot) do merged[key] = value end
+    merged.loans = {}
+
+    local records = type(self.settings.downloaded_loans) == "table" and self.settings.downloaded_loans or {}
+    local live = {}
+    local now = os.time()
+    for _, loan in ipairs(type(snapshot.loans) == "table" and snapshot.loans or {}) do
+        local copy = {}
+        for key, value in pairs(loan) do copy[key] = value end
+        local loan_key = loan.id ~= nil and tostring(loan.id) or nil
+        if loan_key then live[loan_key] = true end
+        if self.settings.extended_loan_time == true then
+            local record = loan_key and records[loan_key] or nil
+            local expires_at = tonumber(loan.expires_at) or (type(record) == "table" and tonumber(record.expires_at) or nil)
+            if type(record) == "table" and expires_at and expires_at <= now then
+                copy.extended_loan = true
+                copy.days_remaining = nil
+            end
+        end
+        table.insert(merged.loans, copy)
+    end
+
+    for _, hold in ipairs(type(snapshot.holds) == "table" and snapshot.holds or {}) do
+        table.insert(merged.loans, hold)
+    end
+
+    if self.settings.extended_loan_time == true then
+        for key, record in pairs(records) do
+            if not live[tostring(key)] and type(record) == "table" and type(record.path) == "string" and record.path ~= "" then
+                table.insert(merged.loans, {
+                    id = record.loan_id or key,
+                    card_id = record.card_id,
+                    title = record.title,
+                    author = record.author,
+                    authors = record.authors,
+                    series = record.series,
+                    series_index = record.series_index,
+                    library = record.library,
+                    expires_at = record.expires_at,
+                    adobe_format = record.adobe_format,
+                    media_type = record.media_type,
+                    non_adobe_format_label = record.non_adobe_format_label,
+                    cover_url = record.cover_url,
+                    extended_loan = true,
+                })
+            end
+        end
+    end
+    return merged
+end
+
 function KOReaderController:reconcile_downloaded_loans(snapshot, remove_book)
     DiagnosticLog.log("[controller] reconcile_downloads:start")
     local records = self.settings.downloaded_loans
@@ -305,15 +433,17 @@ function KOReaderController:reconcile_downloaded_loans(snapshot, remove_book)
     end
     local active = {}
     for _, loan in ipairs(type(snapshot) == "table" and snapshot.loans or {}) do
-        if loan.id ~= nil then active[tostring(loan.id)] = true end
+        if loan.id ~= nil then active[tostring(loan.id)] = loan end
     end
     local now = os.time()
     local removed = 0
     local candidates = 0
     local dry_run = self.settings.cleanup_mode == "dry_run"
     for key, record in pairs(records) do
-        local expired = type(record.expires_at) == "number" and record.expires_at <= now
-        if expired or not active[key] then
+        local live_loan = active[key]
+        local expires_at = type(live_loan) == "table" and tonumber(live_loan.expires_at) or tonumber(record.expires_at)
+        local expired = expires_at ~= nil and expires_at <= now
+        if (expired or not active[key]) and self.settings.extended_loan_time ~= true then
             candidates = candidates + 1
             if not dry_run then
                 local cleanup_ok = true
