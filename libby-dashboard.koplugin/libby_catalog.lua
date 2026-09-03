@@ -887,12 +887,11 @@ function LibbyCatalog:headerWidget(width, height)
     local button_w = height
     local wifi_w = Screen:scaleBySize(78)
     local middle_w = math.max(1, width - 2 * button_w - wifi_w)
-    local chrome_icon = math.min(Screen:scaleBySize(32), math.max(1, height - Screen:scaleBySize(8)))
-    local refresh_icon = math.min(Screen:scaleBySize(26), math.max(1, height - Screen:scaleBySize(12)))
+    local icon_size = math.min(Screen:scaleBySize(26), math.max(1, height - Screen:scaleBySize(10)))
     local row = HorizontalGroup:new{ align = "center" }
     table.insert(row, iconTap(SETTINGS_ICON_PATH or "appbar.settings", button_w, height, function()
         if self.settings_callback then self.settings_callback() end
-    end))
+    end, icon_size))
 
     local center = HorizontalGroup:new{ align = "center" }
     table.insert(center, TextWidget:new{
@@ -904,12 +903,12 @@ function LibbyCatalog:headerWidget(width, height)
     table.insert(center, HorizontalSpan:new{ width = Screen:scaleBySize(6) })
     table.insert(center, iconTap(REFRESH_ICON_PATH or "cre.render.reload", height, height, function()
         if self.refresh_state ~= "refreshing" and self.refresh_callback then self.refresh_callback() end
-    end, refresh_icon))
+    end, icon_size))
     table.insert(row, CenterContainer:new{ dimen = Geom:new{ w = middle_w, h = height }, center })
     table.insert(row, wifiStatusWidget(wifi_w, height))
     table.insert(row, iconTap(CLOSE_ICON_PATH or "close", button_w, height, function()
         if self.close_callback then self.close_callback() else UIManager:close(self) end
-    end, chrome_icon))
+    end, icon_size))
     return row
 end
 
