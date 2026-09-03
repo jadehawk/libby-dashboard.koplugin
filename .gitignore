@@ -1,6 +1,8 @@
 # This repository publishes only the installable KOReader plugin, its release
 # workflow, and the public README. Everything else in this workspace is local
 # development/reference material and must not be pushed.
+# Keep local research, snapshots, handoffs, and legacy prototypes under /reference/.
+/reference/
 /*
 
 !/.gitignore
