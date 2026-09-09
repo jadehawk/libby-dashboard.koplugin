@@ -33,6 +33,7 @@ local DEFAULTS = {
     libby_snapshot = nil,
     libby_identity = nil,
     downloaded_loans = {},
+    book_notes = {},
     cleanup_mode = "normal",
     extended_loan_time = true,
     developer_mode = false,
@@ -41,7 +42,15 @@ local DEFAULTS = {
 
 local function copy_defaults()
     local result = {}
-    for key, value in pairs(DEFAULTS) do result[key] = value end
+    for key, value in pairs(DEFAULTS) do
+        if type(value) == "table" then
+            local copied = {}
+            for nested_key, nested_value in pairs(value) do copied[nested_key] = nested_value end
+            result[key] = copied
+        else
+            result[key] = value
+        end
+    end
     return result
 end
 
@@ -128,6 +137,37 @@ function KOReaderController:save()
     store:saveSetting(KOReaderController.SETTINGS_KEY, self.settings)
     if type(store.flush) == "function" then store:flush() end
     return true
+end
+
+local function book_note_key(item)
+    if type(item) ~= "table" then return nil end
+    local card_id = item.card_id or item.cardId
+    local title_id = item.id
+    if card_id == nil or tostring(card_id) == "" or title_id == nil or tostring(title_id) == "" then return nil end
+    return tostring(card_id) .. ":" .. tostring(title_id)
+end
+
+function KOReaderController:book_note(item)
+    local key = book_note_key(item)
+    local notes = self.settings.book_notes
+    if not key or type(notes) ~= "table" then return nil end
+    local note = notes[key]
+    if type(note) ~= "string" or note == "" then return nil end
+    return note
+end
+
+function KOReaderController:set_book_note(item, note)
+    local key = book_note_key(item)
+    if not key then return nil, "Book Notes require a library card and title id" end
+    if type(note) ~= "string" then return nil, "Book Notes must be text" end
+    note = note:gsub("^%s+", ""):gsub("%s+$", "")
+    if type(self.settings.book_notes) ~= "table" then self.settings.book_notes = {} end
+    if note == "" then
+        self.settings.book_notes[key] = nil
+    else
+        self.settings.book_notes[key] = note
+    end
+    return self:save()
 end
 
 function KOReaderController:get_skipped_update_version()
@@ -229,12 +269,54 @@ function KOReaderController:cancel_hold(hold)
     return client:cancel_hold(hold.card_id, hold.id)
 end
 
+local function borrow_period_days(snapshot, hold)
+    local media_type = hold and hold.media_type or "ebook"
+    local period_key = (media_type == "audiobook" and "audiobook") or (media_type == "magazine" and "magazine") or "book"
+    for _, card in ipairs(type(snapshot) == "table" and snapshot.cards or {}) do
+        if tostring(card.id or "") == tostring(hold.card_id or "") then
+            local periods = type(card.lending_periods) == "table" and card.lending_periods or {}
+            local period = type(periods[period_key]) == "table" and periods[period_key] or {}
+            local preference = type(period.preference) == "table" and tonumber(period.preference[1]) or nil
+            if preference and preference > 0 then return math.floor(preference) end
+            local options = type(period.options) == "table" and period.options or {}
+            local last = options[#options]
+            local option_days = type(last) == "table" and tonumber(last[1]) or nil
+            if option_days and option_days > 0 then return math.floor(option_days) end
+        end
+    end
+    return 21
+end
+
+function KOReaderController:borrow_hold(hold)
+    DiagnosticLog.log("[controller] borrow_hold:start")
+    if type(hold) ~= "table" then return nil, "Hold is missing" end
+    if hold.card_id == nil or tostring(hold.card_id) == "" then return nil, "Hold card id is missing" end
+    if hold.id == nil or tostring(hold.id) == "" then return nil, "Hold title id is missing" end
+    local title_format = hold.borrow_format or hold.media_type or "ebook"
+    local client, client_err = self:libby_client()
+    if not client then return nil, client_err end
+    local days = borrow_period_days(self:cached_libby_snapshot() or {}, hold)
+    local lucky_day = hold.is_available ~= true and (tonumber(hold.lucky_day_available_copies) or 0) > 0
+    return client:borrow_title(hold.card_id, hold.id, title_format, days, lucky_day)
+end
+
 function KOReaderController:download_loan_acsm(loan)
     if type(loan) ~= "table" then return nil, "Loan is missing" end
     if not loan.adobe_format then return nil, "This loan has no Adobe EPUB/PDF format" end
     local client, client_err = self:libby_client()
     if not client then return nil, client_err end
     return client:fulfill_adobe_loan(loan.card_id, loan.id, loan.adobe_format)
+end
+
+function KOReaderController:download_open_loan(loan)
+    if type(loan) ~= "table" then return nil, "Loan is missing" end
+    local format_id = loan.download_format
+    if format_id ~= "ebook-epub-open" and format_id ~= "ebook-pdf-open" then
+        return nil, "This loan has no open EPUB/PDF format"
+    end
+    local client, client_err = self:libby_client()
+    if not client then return nil, client_err end
+    return client:fulfill_open_loan(loan.card_id, loan.id, format_id)
 end
 
 function KOReaderController:cached_libby_snapshot()
@@ -253,11 +335,13 @@ function KOReaderController:normalize_libby_state(state)
             name = LoanModel.card_name(card),
             hold_count = type(card.counts) == "table" and tonumber(card.counts.hold) or nil,
             hold_limit = type(card.limits) == "table" and tonumber(card.limits.hold) or nil,
+            lending_periods = type(card.lendingPeriods) == "table" and card.lendingPeriods or nil,
         })
     end
 
     local holds = {}
     for _, hold in ipairs(LoanModel.list(state.holds or {}, state.cards or {})) do
+        local raw = type(hold.raw) == "table" and hold.raw or {}
         table.insert(holds, {
             id = hold.id,
             card_id = hold.card_id,
@@ -268,8 +352,19 @@ function KOReaderController:normalize_libby_state(state)
             series_index = hold.series_index,
             library = hold.library,
             media_type = hold.media_type,
+            borrow_format = type(raw.type) == "table" and raw.type.id or raw.typeId or raw.mediaType or hold.media_type,
             non_adobe_format_label = hold.non_adobe_format_label,
             cover_url = hold.cover_url,
+            hold_list_position = tonumber(raw.holdListPosition),
+            estimated_wait_days = tonumber(raw.estimatedWaitDays),
+            owned_copies = tonumber(raw.ownedCopies),
+            is_available = raw.isAvailable == true,
+            lucky_day_available_copies = tonumber(raw.luckyDayAvailableCopies),
+            suspension_flag = raw.suspensionFlag == true,
+            suspension_end = raw.suspensionEnd,
+            redeliveries_requested_count = tonumber(raw.redeliveriesRequestedCount),
+            redeliveries_automated_count = tonumber(raw.redeliveriesAutomatedCount),
+            is_pre_release_title = raw.isPreReleaseTitle == true,
             on_hold = true,
         })
     end
@@ -287,6 +382,7 @@ function KOReaderController:normalize_libby_state(state)
             library = loan.library,
             days_remaining = loan.days_remaining,
             expires_at = loan.expires_at,
+            download_format = loan.download_format or loan.adobe_format,
             adobe_format = loan.adobe_format,
             media_type = loan.media_type,
             non_adobe_format_label = loan.non_adobe_format_label,
@@ -324,6 +420,7 @@ function KOReaderController:track_downloaded_loan(loan, path)
         authors = loan.authors,
         series = loan.series,
         series_index = loan.series_index,
+        download_format = loan.download_format or loan.adobe_format,
         adobe_format = loan.adobe_format,
         media_type = loan.media_type,
         non_adobe_format_label = loan.non_adobe_format_label,
@@ -348,7 +445,7 @@ function KOReaderController:refresh_downloaded_loan_metadata(loan)
     local changed = false
     local fields = {
         "card_id", "title", "author", "authors", "series", "series_index", "library",
-        "adobe_format", "media_type", "non_adobe_format_label", "cover_url", "expires_at",
+        "download_format", "adobe_format", "media_type", "non_adobe_format_label", "cover_url", "expires_at",
     }
     for _, field in ipairs(fields) do
         local value = loan[field]
@@ -412,6 +509,7 @@ function KOReaderController:catalog_snapshot(snapshot)
                     series_index = record.series_index,
                     library = record.library,
                     expires_at = record.expires_at,
+                    download_format = record.download_format or record.adobe_format,
                     adobe_format = record.adobe_format,
                     media_type = record.media_type,
                     non_adobe_format_label = record.non_adobe_format_label,

@@ -28,8 +28,9 @@ jobs:
         run: |
           set -euo pipefail
           version=$(awk -F'"' '/^[[:space:]]*version[[:space:]]*=/ { print $2; exit }' libby-dashboard.koplugin/_meta.lua)
+          # 0.2.8 is the bridge release; future releases may use x.y.z.w.
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-            echo "Plugin version in _meta.lua must be x.y.z or x.y.z.w; got: $version" >&2
+            echo "Plugin version in _meta.lua must be legacy x.y.z or four-part x.y.z.w; got: $version" >&2
             exit 1
           fi
           tag="v${version}"
@@ -56,6 +57,10 @@ jobs:
         run: |
           set -euo pipefail
           find libby-dashboard.koplugin -maxdepth 1 -type f -name '*.lua' -print0 | sort -z | xargs -0 -n1 /usr/bin/luac5.1 -p
+
+      - name: Validate 3-part to 4-part update bridge
+        shell: bash
+        run: /usr/bin/lua5.1 libby-dashboard.koplugin/spec/version_test.lua
 
       - name: Validate plugin package
         shell: bash

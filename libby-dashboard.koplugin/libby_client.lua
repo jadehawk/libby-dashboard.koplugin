@@ -298,6 +298,32 @@ function LibbyClient:cancel_hold(card_id, title_id)
     return true
 end
 
+function LibbyClient:borrow_title(card_id, title_id, title_format, days, is_lucky_day_loan)
+    if card_id == nil or tostring(card_id) == "" then return nil, "Borrow card id is missing" end
+    if title_id == nil or tostring(title_id) == "" then return nil, "Borrow title id is missing" end
+    if title_format == nil or tostring(title_format) == "" then return nil, "Borrow title format is missing" end
+    days = math.floor(tonumber(days) or 21)
+    if days <= 0 then return nil, "Borrow period must be positive" end
+
+    local path = "/card/" .. tostring(card_id) .. "/loan/" .. tostring(title_id)
+    local payload = { period = days, units = "days", title_format = tostring(title_format) }
+    if is_lucky_day_loan == true then payload.lucky_day = 1 end
+    local response, err = self:_request("POST", path, { identity = self.identity, json = payload })
+    if not response then return nil, err end
+
+    if response.status == 403 and response_result(response) == "missing_chip" then
+        local refreshed, refresh_err = self:get_chip(true, true)
+        if not refreshed then return nil, refresh_err end
+        response, err = self:_request("POST", path, { identity = self.identity, json = payload })
+        if not response then return nil, err end
+    end
+
+    if response.status < 200 or response.status >= 300 then
+        return nil, "Libby borrow failed with HTTP " .. tostring(response.status)
+    end
+    return type(response.body) == "table" and response.body or true
+end
+
 function LibbyClient:sync()
     local response, err = self:_request("GET", "/chip/sync", {
         identity = self.identity,
@@ -325,7 +351,7 @@ function LibbyClient:sync()
     return response.body
 end
 
-function LibbyClient:_recover_fulfillment_on_same_connection(path)
+function LibbyClient:_recover_fulfillment_on_same_connection(path, return_href)
     if type(self.transport.request_sequence) ~= "function" then
         return nil, "KOReader transport does not support persistent fulfillment requests"
     end
@@ -362,6 +388,7 @@ function LibbyClient:_recover_fulfillment_on_same_connection(path)
     local href = type(retry.body) == "table" and retry.body.fulfill and retry.body.fulfill.href
     if type(href) ~= "string" or href == "" then return nil, "Libby fulfillment response did not contain fulfill.href" end
     if not href:match("^https://") then return nil, "Libby returned a non-HTTPS fulfillment URL" end
+    if return_href then return href end
     local acsm, download_err = self.transport:request({ method = "GET", base_url = href, path = "", headers = { ["User-Agent"] = self.user_agent, ["Accept"] = "*/*" } })
     if not acsm then return nil, download_err end
     if acsm.status ~= 200 then return nil, "ACSM download failed with HTTP " .. tostring(acsm.status) end
@@ -396,6 +423,39 @@ function LibbyClient:fulfill_adobe_loan(card_id, loan_id, format_id)
     if type(acsm.raw_body) ~= "string" or acsm.raw_body == "" then return nil, "ACSM download returned an empty body" end
     if not acsm.raw_body:find("<", 1, true) then return nil, "ACSM download did not return XML" end
     return acsm.raw_body
+end
+
+function LibbyClient:fulfill_open_loan(card_id, loan_id, format_id)
+    if not self.identity then return nil, "Libby identity is missing" end
+    if not card_id or not loan_id or not format_id then return nil, "Loan fulfillment identifiers are missing" end
+    if format_id ~= "ebook-epub-open" and format_id ~= "ebook-pdf-open" then
+        return nil, "Loan format is not an open EPUB/PDF format"
+    end
+
+    local path = "/card/" .. tostring(card_id) .. "/loan/" .. tostring(loan_id) .. "/fulfill/" .. tostring(format_id)
+    local response, err = self:_request("GET", path, { identity = self.identity })
+    if not response then return nil, err end
+    if response.status == 403 and response_result(response) == "missing_chip" then
+        local recovered_href, recover_err = self:_recover_fulfillment_on_same_connection(path, true)
+        if not recovered_href then return nil, recover_err end
+        response = { status = 200, body = { fulfill = { href = recovered_href } } }
+    end
+    if response.status ~= 200 then return nil, "Libby fulfillment failed with HTTP " .. tostring(response.status) end
+
+    local href = type(response.body) == "table" and response.body.fulfill and response.body.fulfill.href
+    if type(href) ~= "string" or href == "" then return nil, "Libby fulfillment response did not contain fulfill.href" end
+    if not href:match("^https://") then return nil, "Libby returned a non-HTTPS fulfillment URL" end
+
+    local payload, download_err = self.transport:request({
+        method = "GET",
+        base_url = href,
+        path = "",
+        headers = { ["User-Agent"] = self.user_agent, ["Accept"] = "*/*" },
+    })
+    if not payload then return nil, download_err end
+    if payload.status ~= 200 then return nil, "Open ebook download failed with HTTP " .. tostring(payload.status) end
+    if type(payload.raw_body) ~= "string" or payload.raw_body == "" then return nil, "Open ebook download returned an empty body" end
+    return payload.raw_body
 end
 
 function LibbyClient:get_cards()

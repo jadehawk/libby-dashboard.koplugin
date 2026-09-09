@@ -10,6 +10,7 @@ function Version.parse(value)
             tonumber(minor),
             tonumber(patch),
             tonumber(revision),
+            component_count = 4,
         }
     end
 
@@ -20,6 +21,7 @@ function Version.parse(value)
         tonumber(minor),
         tonumber(patch),
         0,
+        component_count = 3,
     }
 end
 
@@ -33,7 +35,11 @@ function Version.is_newer(candidate, current)
             return candidate_parts[index] > current_parts[index]
         end
     end
-    return false
+
+    -- Bridge from legacy x.y.z releases to explicit x.y.z.w releases.
+    -- An explicit revision, including .0, sorts after the otherwise-identical
+    -- legacy three-component version so 0.2.8 can update to 0.2.8.0.
+    return candidate_parts.component_count > current_parts.component_count
 end
 
 return Version

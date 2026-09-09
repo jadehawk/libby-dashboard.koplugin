@@ -58,9 +58,9 @@ function Layout.expandedDetailGeometry(width, height, pad, action_height, gap, b
     scale = scale or function(value) return value end
     tall = tall == true
 
-    local min_button_width = scale(100)
-    local minimum_action_width = button_count * min_button_width + (button_count - 1) * gap
-    local minimum_info_width = math.max(scale(260), minimum_action_width)
+    -- The action row spans the full card width below the cover + metadata, so
+    -- the number of bottom buttons must not squeeze the cover column.
+    local minimum_info_width = scale(260)
 
     if tall then
         local action_width = math.max(1, width - 2 * pad)

@@ -100,22 +100,51 @@ function LibbyState.loan_days_remaining(loan, now_timestamp)
     return iso_date_days_remaining(expire, now_timestamp)
 end
 
-function LibbyState.adobe_formats(loan)
+function LibbyState.download_formats(loan)
     local formats = {}
     if type(loan) ~= "table" or type(loan.formats) ~= "table" then
         return formats
     end
 
+    local supported = {
+        ["ebook-epub-adobe"] = true,
+        ["ebook-pdf-adobe"] = true,
+        ["ebook-epub-open"] = true,
+        ["ebook-pdf-open"] = true,
+    }
     for _, format in ipairs(loan.formats) do
-        if type(format) == "table" then
-            local id = format.id
-            if id == "ebook-epub-adobe" or id == "ebook-pdf-adobe" then
-                table.insert(formats, id)
-            end
+        if type(format) == "table" and supported[format.id] then
+            table.insert(formats, format.id)
         end
     end
 
     return formats
+end
+
+function LibbyState.adobe_formats(loan)
+    local formats = {}
+    for _, id in ipairs(LibbyState.download_formats(loan)) do
+        if id == "ebook-epub-adobe" or id == "ebook-pdf-adobe" then
+            table.insert(formats, id)
+        end
+    end
+    return formats
+end
+
+function LibbyState.preferred_download_format(loan)
+    local available = {}
+    for _, id in ipairs(LibbyState.download_formats(loan)) do
+        available[id] = true
+    end
+    for _, id in ipairs({
+        "ebook-epub-adobe",
+        "ebook-pdf-adobe",
+        "ebook-epub-open",
+        "ebook-pdf-open",
+    }) do
+        if available[id] then return id end
+    end
+    return nil
 end
 
 function LibbyState.preferred_adobe_format(loan)

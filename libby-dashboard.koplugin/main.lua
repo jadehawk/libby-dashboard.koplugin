@@ -578,13 +578,28 @@ function LibbyDashboard:removeTrackedBook(record)
     return true
 end
 
-function LibbyDashboard:downloadLoan(loan)
+function LibbyDashboard:downloadLoan(loan, options)
     DiagnosticLog.log("[loan] download:requested")
-    if not loan or not loan.adobe_format then
+    options = type(options) == "table" and options or {}
+    local from_borrow = options.from_borrow == true
+    local function show_download_error(message)
+        if from_borrow then
+            message = _("Borrowed successfully, but automatic download failed.") .. "\n\n" .. tostring(message or "")
+        end
+        UIManager:show(InfoMessage:new{ text = message })
+    end
+    local function show_download_success(path)
+        local label = from_borrow and _("Borrowed and downloaded successfully:") or _("Book downloaded successfully:")
+        UIManager:show(InfoMessage:new{ text = label .. "\n\n" .. tostring(path) })
+    end
+    if not loan or not (loan.download_format or loan.adobe_format) then
         local kind = loan and loan.media_type
         local message = kind == "audiobook" and _("Audiobooks are not currently supported by the Libby plugin.")
             or kind == "magazine" and _("Magazines are not currently supported by the Libby plugin.")
-            or _("This loan has no supported Adobe EPUB/PDF format.")
+            or _("This loan has no supported EPUB/PDF format.")
+        if from_borrow then
+            message = _("Borrowed successfully. This title is not downloadable here; read it on Libby.") .. "\n\n" .. message
+        end
         UIManager:show(InfoMessage:new{ text = message })
         return
     end
@@ -593,23 +608,64 @@ function LibbyDashboard:downloadLoan(loan)
     self:runNetworkAction(function()
         Trapper:wrap(function()
         Trapper:info(_("Fetching book from Libby…\n\nPlease stand by."), false, true)
+        local format_id = loan.download_format or loan.adobe_format
+        local open_format = format_id == "ebook-epub-open" or format_id == "ebook-pdf-open"
+        if open_format then
+            local payload, open_err = self.controller:download_open_loan(loan)
+            if not payload then
+                Trapper:reset()
+                show_download_error(_("Could not download open ebook:") .. "\n\n" .. tostring(open_err))
+                return
+            end
+            local extension = format_id == "ebook-pdf-open" and "pdf" or "epub"
+            local expected_magic = extension == "pdf" and "%PDF-" or ("PK" .. string.char(0x03, 0x04))
+            if payload:sub(1, #expected_magic) ~= expected_magic then
+                Trapper:reset()
+                show_download_error(_("Libby returned an unexpected file for this open ebook."))
+                return
+            end
+            local output = self.controller:book_destination(loan, extension)
+            local parent = util.dirname(output)
+            if parent and parent ~= "" and not koUtil.makePath(parent) then
+                Trapper:reset()
+                show_download_error(_("Could not create destination folder:") .. "\n\n" .. tostring(parent))
+                return
+            end
+            local file, file_err = io.open(output, "wb")
+            if not file then
+                Trapper:reset()
+                show_download_error(_("Could not save book:") .. "\n\n" .. tostring(file_err))
+                return
+            end
+            file:write(payload)
+            file:close()
+            self:restoreReadingHistory(loan, output)
+            self.controller:track_downloaded_loan(loan, output)
+            Trapper:clear()
+            if self.catalog_browser and UIManager:isWidgetShown(self.catalog_browser) then
+                self.catalog_browser:updateItems()
+            end
+            show_download_success(output)
+            return
+        end
+
         local acsm, err = self.controller:download_loan_acsm(loan)
         if not acsm then
             Trapper:reset()
-            UIManager:show(InfoMessage:new{ text = _("Could not download ACSM:") .. "\n\n" .. tostring(err) })
+            show_download_error(_("Could not download ACSM:") .. "\n\n" .. tostring(err))
             return
         end
         local destination = self.controller:book_destination(loan, "acsm")
         local parent = util.dirname(destination)
         if parent and parent ~= "" and not koUtil.makePath(parent) then
             Trapper:reset()
-            UIManager:show(InfoMessage:new{ text = _("Could not create destination folder:") .. "\n\n" .. tostring(parent) })
+            show_download_error(_("Could not create destination folder:") .. "\n\n" .. tostring(parent))
             return
         end
         local file, file_err = io.open(destination, "wb")
         if not file then
             Trapper:reset()
-            UIManager:show(InfoMessage:new{ text = _("Could not save ACSM:") .. "\n\n" .. tostring(file_err) })
+            show_download_error(_("Could not save ACSM:") .. "\n\n" .. tostring(file_err))
             return
         end
         file:write(acsm)
@@ -620,10 +676,8 @@ function LibbyDashboard:downloadLoan(loan)
             local registered, register_err = self.controller:ensure_adobe_registration()
             if not registered then
                 Trapper:reset()
-                UIManager:show(InfoMessage:new{
-                    text = _("ACSM downloaded successfully:") .. "\n\n" .. destination
-                        .. "\n\n" .. _("Could not prepare Adobe authorization:") .. "\n" .. tostring(register_err),
-                })
+                show_download_error(_("ACSM downloaded successfully:") .. "\n\n" .. destination
+                    .. "\n\n" .. _("Could not prepare Adobe authorization:") .. "\n" .. tostring(register_err))
                 return
             end
         end
@@ -634,7 +688,7 @@ function LibbyDashboard:downloadLoan(loan)
         local fulfilled, fulfill_err = self.controller:fulfill_acsm(destination, output)
         if not fulfilled then
             Trapper:reset()
-            UIManager:show(InfoMessage:new{ text = _("ACSM saved, but Adobe fulfillment failed:") .. "\n\n" .. tostring(fulfill_err) })
+            show_download_error(_("ACSM saved, but Adobe fulfillment failed:") .. "\n\n" .. tostring(fulfill_err))
             return
         end
         os.remove(destination)
@@ -645,7 +699,7 @@ function LibbyDashboard:downloadLoan(loan)
         if self.catalog_browser and UIManager:isWidgetShown(self.catalog_browser) then
             self.catalog_browser:updateItems()
         end
-        UIManager:show(InfoMessage:new{ text = _("Book downloaded successfully:") .. "\n\n" .. tostring(downloaded_path) })
+        show_download_success(downloaded_path)
         end)
     end)
 end
@@ -663,7 +717,7 @@ function LibbyDashboard:showLoanDetails(loan)
         local suffix = loan.days_remaining == 1 and _(" day remaining") or _(" days remaining")
         table.insert(lines, _("Loan: ") .. tostring(loan.days_remaining) .. suffix)
     end
-    table.insert(lines, _("Format: ") .. tostring(loan.adobe_format or loan.non_adobe_format_label or loan.media_type or _("Unsupported")))
+    table.insert(lines, _("Format: ") .. tostring(loan.download_format or loan.adobe_format or loan.non_adobe_format_label or loan.media_type or _("Unsupported")))
     local dialog
     local buttons = {}
     local downloaded = self.controller:downloaded_loan(loan.id)
@@ -675,7 +729,7 @@ function LibbyDashboard:showLoanDetails(loan)
                 UIManager:nextTick(function() self.ui:openFile(local_path) end)
             end
         end } })
-    elseif loan.adobe_format then
+    elseif loan.download_format or loan.adobe_format then
         table.insert(buttons, { { text = _("Download"), callback = function()
             UIManager:close(dialog)
             self:downloadLoan(loan)
@@ -1163,6 +1217,90 @@ function LibbyDashboard:deleteExtendedLoan(loan)
     })
 end
 
+function LibbyDashboard:showBookNotes(item)
+    if type(item) ~= "table" then return end
+    local current = self.controller:book_note(item) or ""
+    local dialog
+    dialog = MultiInputDialog:new{
+        title = _("Book Notes"),
+        description = string.format(_("Add a short reminder about '%s'. Book Notes stay with this title as it moves from hold to loan and are stored locally on this device, not sent to Libby."), tostring(item.title or _("this title"))),
+        fields = { { text = current, hint = _("Short reading reminder") } },
+        buttons = {
+            {
+                { text = _("Close"), id = "close", callback = function() UIManager:close(dialog) end },
+                { text = _("Save"), is_enter_default = true, callback = function()
+                    local fields = dialog:getFields()
+                    local value = (fields and fields[1]) or ""
+                    local ok, err = self.controller:set_book_note(item, value)
+                    if not ok then
+                        UIManager:show(InfoMessage:new{ text = _("Could not save Book Notes: ") .. tostring(err or _("unknown error")) })
+                        return
+                    end
+                    UIManager:close(dialog)
+                    if self.catalog_browser then self.catalog_browser:updateItems() end
+                end },
+            },
+        },
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+function LibbyDashboard:borrowHold(hold)
+    DiagnosticLog.log("[hold] borrow:requested")
+    if type(hold) ~= "table" then return end
+    local title = tostring(hold.title or _("this title"))
+    UIManager:show(ConfirmBox:new{
+        text = string.format(_("Borrow '%s'?"), title),
+        ok_text = _("Borrow"),
+        ok_callback = function()
+            self:runNetworkAction(function()
+                local ok, err = self.controller:borrow_hold(hold)
+                if not ok then
+                    UIManager:show(InfoMessage:new{ text = _("Could not borrow hold: ") .. tostring(err or _("unknown error")) })
+                    return
+                end
+
+                local refreshed, refresh_err = self.controller:refresh_libby_snapshot()
+                if not refreshed then
+                    DiagnosticLog.log("[hold] borrow:refresh-failed", tostring(refresh_err or ""))
+                    UIManager:show(InfoMessage:new{
+                        text = _("Borrowed successfully, but the library could not be refreshed for automatic download.")
+                            .. "\n\n" .. tostring(refresh_err or _("Refresh the dashboard and use Download to retry.")),
+                    })
+                    return
+                end
+
+                local borrowed_loan
+                for _, loan in ipairs(refreshed.loans or {}) do
+                    if tostring(loan.id or "") == tostring(hold.id or "")
+                            and tostring(loan.card_id or "") == tostring(hold.card_id or "") then
+                        borrowed_loan = loan
+                        break
+                    end
+                end
+
+                if self.catalog_browser and UIManager:isWidgetShown(self.catalog_browser) then
+                    self.catalog_browser:refreshSnapshot(self.controller:catalog_snapshot(refreshed), "live")
+                end
+
+                if not borrowed_loan then
+                    DiagnosticLog.log("[hold] borrow:loan-not-found")
+                    UIManager:show(InfoMessage:new{
+                        text = _("Borrowed successfully. The new loan is not available for automatic download yet.")
+                            .. "\n\n" .. _("Refresh the dashboard and use Download to retry."),
+                    })
+                    return
+                end
+
+                DiagnosticLog.log("[hold] borrow:auto-download", tostring(borrowed_loan.download_format or borrowed_loan.adobe_format or "unsupported"))
+                UIManager:nextTick(function()
+                    self:downloadLoan(borrowed_loan, { from_borrow = true })
+                end)
+            end)
+        end,
+    })
+end
 function LibbyDashboard:cancelHold(hold)
     DiagnosticLog.log("[hold] cancel:requested")
     if type(hold) ~= "table" then return end
@@ -1236,8 +1374,17 @@ function LibbyDashboard:showBrowser()
         return_callback = function(loan)
             self:returnLoan(loan)
         end,
+        borrow_hold_callback = function(hold)
+            self:borrowHold(hold)
+        end,
         cancel_hold_callback = function(hold)
             self:cancelHold(hold)
+        end,
+        book_note_callback = function(item)
+            return self.controller:book_note(item)
+        end,
+        edit_book_note_callback = function(item)
+            self:showBookNotes(item)
         end,
         delete_callback = function(loan)
             self:deleteExtendedLoan(loan)

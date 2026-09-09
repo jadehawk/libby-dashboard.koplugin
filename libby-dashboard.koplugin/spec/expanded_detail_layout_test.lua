@@ -45,11 +45,41 @@ assert(emulator_detail.action_width > emulator_detail.info_width, "normal grid/l
 assert(emulator_detail.top_height < emulator_modal.height, "normal grid/list detail must reserve a separate bottom action band")
 assert(emulator_detail.cover_width > 0 and emulator_detail.cover_height > 0)
 
+local emulator_four_button_detail = Layout.expandedDetailGeometry(
+    emulator_modal.width,
+    emulator_modal.height,
+    4,
+    34,
+    8,
+    4,
+    identity_scale,
+    false
+)
+assert(emulator_four_button_detail.cover_width == emulator_detail.cover_width,
+    "adding a fourth bottom action must not shrink the detail cover")
+
 local catalog_file = assert(io.open("libby-dashboard.koplugin/libby_catalog.lua", "rb"))
 local catalog_source = catalog_file:read("*a")
 catalog_file:close()
 assert(catalog_source:find("TopFirstOverlapGroup", 1, true), "expanded overlay must dispatch input to the topmost painted layer first")
 assert(catalog_source:find("stop_events_propagation = true", 1, true), "expanded detail layer must block gestures from reaching books behind it")
 assert(catalog_source:find("ges.pos:notIntersectWith(modal_rect)", 1, true), "tapping outside the detail card must dismiss it")
+
+assert(catalog_source:find("local top_inset = math.max(5, Screen:scaleBySize(5))", 1, true), "all detail cards must keep at least a five-pixel top border gap")
+assert(catalog_source:find("table.insert(content_stack, VerticalSpan:new{ width = top_inset })", 1, true), "normal and Hold detail content must share the real KOReader top inset")
+assert(catalog_source:find("dimen = Geom:new{ w = cover_w, h = top_row_h }", 1, true), "cover must live in its own top-aligned row cell")
+assert(catalog_source:find("local cover_top_inset = math.max(1, Screen:scaleBySize(1))", 1, true), "cover should only add a tiny inset beyond the shared card gap")
+assert(catalog_source:find("VerticalSpan:new{ width = cover_top_inset }", 1, true), "cover top inset must be applied inside the cover cell")
+assert(catalog_source:find("local compact_trim = math.max(2, Screen:scaleBySize(4))", 1, true), "detail metadata must trim KOReader's default line boxes")
+assert(catalog_source:find("local notes = VerticalGroup:new{ align = \"left\" }", 1, true), "Book Notes must be a separate full-width section")
+assert(catalog_source:find("VerticalSpan:new{ width = math.max(2, Screen:scaleBySize(2)) }", 1, true), "Book Notes must keep a compact separation from the action band")
+assert(not catalog_source:find("VerticalSpan:new{ height =", 1, true), "VerticalSpan spacers must use width, because KOReader ignores height for this widget")
+assert(catalog_source:find('then return loanTimeText(loan) end', 1, true), "downloaded cover status must show remaining loan time")
+assert(not catalog_source:find('return _("Download")', 1, true), "Download must remain an action and never be used as a cover-state caption")
+assert(catalog_source:find('if loan and loan.extended_loan == true then return loanTimeText(loan) end', 1, true), "Extended Loan cover status must describe state rather than local availability")
+assert(catalog_source:find("local action_band_h = action_h + math.max(4, Screen:scaleBySize(4))", 1, true), "action band must stay content-sized instead of consuming leftover modal height")
+assert(catalog_source:find("content_h + action_band_h + 2 * Size.border.default", 1, true), "detail card height must be derived from actual content")
+assert(catalog_source:find("local detail_size = detail:getSize()", 1, true), "detail hit rectangle must follow the content-sized visible card")
+assert(not catalog_source:find("height - geometry.top_height", 1, true), "detail actions must never be centered inside leftover fixed-height space")
 
 print("expanded_detail_layout_test: ok")

@@ -172,6 +172,7 @@ function LoanModel.from_loan(loan, cards)
         library = LoanModel.library_name(loan, cards),
         days_remaining = LibbyState.loan_days_remaining(loan),
         expires_at = LibbyState.loan_expire_timestamp(loan),
+        download_format = LibbyState.preferred_download_format(loan),
         adobe_format = LibbyState.preferred_adobe_format(loan),
         media_type = LoanModel.media_type(loan),
         non_adobe_format_label = LoanModel.non_adobe_format_label(loan),
