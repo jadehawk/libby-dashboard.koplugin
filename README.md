@@ -44,6 +44,10 @@ Libby Dashboard has been successfully tested for Libby login, ByteBooks sign-in,
   <img src="assets/05-ReturnBook02.png" alt="Return book confirmation" width="350" height="750">
 </p>
 <p align="center">
+  <img src="assets/05a%20-%20Holds_Ready_Inline.png" alt="Libby Dashboard hold and loan status labels" width="350" height="750">
+  <img src="assets/05a%20-%20Ready_To_Borrow.png" alt="Libby Dashboard Book Notes and ready-to-borrow hold" width="350" height="750">
+</p>
+<p align="center">
   <img src="assets/06-Settings01.png" alt="Libby Dashboard settings" width="350" height="750">
   <img src="assets/06-Settings02.png" alt="Libby Dashboard settings" width="350" height="750">
 </p>
