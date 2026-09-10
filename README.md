@@ -1,8 +1,8 @@
 # Libby Dashboard for KOReader
 
-Libby Dashboard is a self-contained KOReader plugin for browsing and reading supported loans from libraries linked to a Libby account. It brings the loan shelf directly to the e-reader instead of requiring a separate computer for normal borrowing and fulfillment.
+Libby Dashboard is a self-contained KOReader plugin for browsing and reading supported loans from libraries linked to a Libby account. It brings your Libby loans, holds, magazine subscriptions, and audiobook shelf directly to the e-reader instead of requiring a separate computer for normal borrowing and fulfillment.
 
-**Libby Dashboard focuses on your current loans and holds. It cannot browse or search your library catalog or place new holds, but a hold that becomes available can be borrowed directly from the plugin. Other new titles must still be found and borrowed through the official Libby application.**
+**Libby Dashboard focuses on your current loans, holds, and subscribed magazines. It cannot browse or search your library catalog or place new holds, but a hold that becomes available can be borrowed directly from the plugin. Other new titles must still be found and borrowed through the official Libby application.**
 
 Current plugin version: **0.2.8.1**
 
@@ -12,72 +12,82 @@ Current plugin version: **0.2.8.1**
 2. Extract the ZIP.
 3. Copy the entire `libby-dashboard.koplugin` folder to KOReader's `plugins` folder.
 4. Restart KOReader.
-5. Open **Libby Dashboard** from KOReader's **Tools** menu and complete the required setup under **Authentication**: **Libby Setup** and **Adobe/ByteBooks Setup**.
+5. Open **Libby Dashboard** from KOReader's **Tools** menu. Use **Settings → Accounts** to configure **Libby Account** and **ByteBooks / Adobe Authorization**.
 
-After the initial installation, future releases can be installed directly from **Libby Dashboard Settings → Check for Updates**.
+After the initial installation, future releases can be installed directly from **Settings → General → Check for Updates**.
 
 ## Tested devices
 
-Libby Dashboard has been successfully tested for Libby login, ByteBooks sign-in, and book downloads on:
+Libby Dashboard has been successfully tested across touch and non-touch KOReader devices, including:
 
 - Boox Go 7 Gen 2
 - Kindle Paperwhite Signature Edition (12th Gen)
+- Kindle 4th Generation non-touch — including D-pad navigation, Settings, account-backup restore, Libby library restore, and ByteBooks authorization restore
 - Kobo Clara BW
 - Samsung Galaxy S24-Ultra
 
 ## Screenshots
 
+### Library Browser
+
 <p align="center">
-  <img src="assets/01-Main_UI.png" alt="Libby Dashboard main UI" width="350" height="750">
-  <img src="assets/02-Comic-Manga.png" alt="Libby Dashboard comic and manga loan" width="350" height="750">
+  <img src="assets/01%20-%20All_Libraries_Grid.png" alt="All Libraries grid view" width="350" height="750">
+  <img src="assets/02%20-%20All_Libraries_List.png" alt="All Libraries list view" width="350" height="750">
 </p>
 <p align="center">
-  <img src="assets/03-Audiobook.png" alt="Libby Dashboard audiobook loan" width="350" height="750">
-  <img src="assets/04-DownloadBook01.png" alt="Download book flow" width="350" height="750">
+  <img src="assets/03%20-%20All_Libraries_Grid_Holds.png" alt="All Libraries holds grid view" width="350" height="750">
+  <img src="assets/04%20-%20All_Libraries_List_Holds.png" alt="All Libraries holds list view" width="350" height="750">
 </p>
 <p align="center">
-  <img src="assets/04-DownloadBook02.png" alt="Download book confirmation" width="350" height="750">
-  <img src="assets/04-DownloadBook03.png" alt="Downloaded book ready to open" width="350" height="750">
+  <img src="assets/05%20-%20Single_Library_Grid.png" alt="Single library grid view" width="350" height="750">
+  <img src="assets/06%20-%20Single_Library_List.png" alt="Single library list view" width="350" height="750">
+</p>
+
+### Media Racks
+
+<p align="center">
+  <img src="assets/07%20-%20Audiobook_Rack_Grid.png" alt="Audiobook Rack grid view" width="350" height="750">
+  <img src="assets/08%20-%20Audiobook_Rack_List.png" alt="Audiobook Rack list view" width="350" height="750">
 </p>
 <p align="center">
-  <img src="assets/05-ReturnBook01.png" alt="Return book action" width="350" height="750">
-  <img src="assets/05-ReturnBook02.png" alt="Return book confirmation" width="350" height="750">
+  <img src="assets/09%20-%20Magazine_Rack_Grid.png" alt="Magazine Rack grid view" width="350" height="750">
+  <img src="assets/10%20-%20Magazine_Rack_List.png" alt="Magazine Rack list view" width="350" height="750">
+</p>
+
+### Settings
+
+<p align="center">
+  <img src="assets/11%20-%20Settings_General.png" alt="General settings" width="350" height="750">
+  <img src="assets/12%20-%20settings_Accounts.png" alt="Accounts settings" width="350" height="750">
 </p>
 <p align="center">
-  <img src="assets/05a%20-%20Holds_Ready_Inline.png" alt="Libby Dashboard hold and loan status labels" width="350" height="750">
-  <img src="assets/05a%20-%20Ready_To_Borrow.png" alt="Libby Dashboard Book Notes and ready-to-borrow hold" width="350" height="750">
+  <img src="assets/13%20-%20Settings_Downloads.png" alt="Download settings" width="350" height="750">
+  <img src="assets/14%20-%20Settings_Shelves_Setup.png" alt="Library and shelves settings" width="350" height="750">
 </p>
 <p align="center">
-  <img src="assets/06-Settings01.png" alt="Libby Dashboard settings" width="350" height="750">
-  <img src="assets/06-Settings02.png" alt="Libby Dashboard settings" width="350" height="750">
-</p>
-<p align="center">
-  <img src="assets/06-Settings03.png" alt="Libby Dashboard settings" width="350" height="750">
-  <img src="assets/06-Settings04.png" alt="Libby Dashboard settings" width="350" height="750">
-</p>
-<p align="center">
-  <img src="assets/06-Settings05.png" alt="Libby Dashboard settings" width="350" height="750">
-  <img src="assets/06-Settings06.png" alt="Libby Dashboard settings" width="350" height="750">
-</p>
-<p align="center">
-  <img src="assets/06-Settings07.png" alt="Libby Dashboard settings" width="350" height="750">
+  <img src="assets/15%20-%20Settings_About.png" alt="About settings" width="350" height="750">
 </p>
 
 ## What it does
 
 - Authenticates with Libby using Libby's device setup-code flow.
-- Displays all linked library cards, plus a combined **All** shelf.
+- Opens directly into the full **Library Browser**, with configurable **Grid** and **List** views.
+- Displays every linked library individually plus a combined **All Libraries** view, and remembers the last library/rack and Grid/List mode used.
 - Displays current holds with queue/wait/suspension status and direct borrowing when a hold becomes available.
+- Provides dedicated **Audiobooks** and **Magazine Rack** views, grouped by source library when multiple library cards contribute items.
+- Builds Magazine Rack from both checked-out magazine issues and Libby **Notify Me** subscriptions, including subscription-only current issues.
+- Retrieves covers for subscription-only magazine issues and marks a subscribed magazine **NEW ISSUE** when Libby delivers a newer issue.
+- Shows magazine frequency plus edition/publication metadata, while audiobooks use **Listen on Libby** for Libby-only playback.
 - Keeps local **Book Notes** attached to a title across its hold, borrowed, downloaded, and Extended Loan lifecycle.
-- Presents loans and holds in a configurable cover grid with a responsive selected-book details panel, per-cover status labels, and library tabs.
-- Shows title, author, series information, format, lending library, and remaining loan time when available.
+- Shows title details including author or magazine edition, series information, format, lending library, and remaining loan time when available.
 - Downloads supported EPUB loans and opens the resulting book directly in KOReader. PDF fulfillment is implemented but has not yet been validated with a real Libby PDF loan.
-- Identifies unsupported loan types such as audiobooks, magazines, and MediaDo manga/comics so they can still appear on the shelf with useful cover and metadata information.
-- Returns active loans to Libby early from the selected-book panel, with confirmation before the return is submitted.
+- Keeps unsupported reading formats such as MediaDo manga/comics visible with useful cover and metadata information.
+- Returns active loans to Libby early from the title detail panel, with confirmation before the return is submitted.
+- Supports hardware D-pad navigation on non-touch devices, including the root browser, header actions, title details, and Settings.
 - Supports Adobe/ByteBooks authorization, including ByteBooks username/password authorization and anonymous Adobe authorization.
 - Creates password-protected account backups containing the Libby authorization and Adobe/ByteBooks registration state for portable restore to another device.
 - Registers as an ACSM handler, so supported external `.acsm` files can also be fulfilled and opened through the plugin.
-- Caches the Libby library snapshot and covers for useful offline browsing.
+- Caches the Libby library snapshot and covers, including Magazine Rack subscription covers, for useful offline browsing.
 - Tracks downloaded loans so the local shelf can follow the state of the Libby loan.
 
 ## How book loans are handled
@@ -107,17 +117,16 @@ Plugin settings, cached state, covers, and preserved reading history are kept un
 The default downloaded-book layout is:
 
 ```text
-HOME/Libby_Books/<author:first>/<series>/<title>.<ext>
+HOME/Libby_Loans/<author:first>/<series>/<series_index> - <title>.<ext>
 ```
-```text
-<author:first> Refers to the First Author incase of Multi-Author book.
-```
+
+`<author:first>` refers to the first author when a book has multiple authors.
 
 ## Development
 
 The repository contains the installable KOReader plugin in `libby-dashboard.koplugin/` together with Lua protocol/core code and tests used during development. The compatibility target is Lua 5.1 / LuaJIT as used by KOReader.
 
-The implementation has also benefited from selected ideas and functions from the Libby calibre plugin projects, `acsm.koplugin`, and UI/layout ideas from `bookshelf.koplugin`. Portions derived from `acsm.koplugin` retain the original MIT license notice in `libby-dashboard.koplugin/LICENSE-acsm.koplugin`. See the in-plugin Credits page for project links and acknowledgements.
+The implementation has also benefited from selected ideas and functions from the Libby calibre plugin projects, `acsm.koplugin`, `bookshelf.koplugin`, and `libbee.koplugin`. Portions derived from `acsm.koplugin` retain the original MIT license notice in `libby-dashboard.koplugin/LICENSE-acsm.koplugin`. See the in-plugin Credits page for project links and acknowledgements.
 
 ## AI-assisted development disclaimer
 
