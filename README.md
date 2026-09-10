@@ -126,7 +126,7 @@ HOME/Libby_Loans/<author:first>/<series>/<series_index> - <title>.<ext>
 
 The repository contains the installable KOReader plugin in `libby-dashboard.koplugin/` together with Lua protocol/core code and tests used during development. The compatibility target is Lua 5.1 / LuaJIT as used by KOReader.
 
-The implementation has also benefited from selected ideas and functions from the Libby calibre plugin projects, `acsm.koplugin`, `bookshelf.koplugin`, and `libbee.koplugin`. Portions derived from `acsm.koplugin` retain the original MIT license notice in `libby-dashboard.koplugin/LICENSE-acsm.koplugin`. See the in-plugin Credits page for project links and acknowledgements.
+The implementation has also benefited from selected ideas and functions from the Libby calibre plugin projects and `acsm.koplugin`. Portions derived from `acsm.koplugin` retain the original MIT license notice in `libby-dashboard.koplugin/LICENSE-acsm.koplugin`. See the in-plugin Credits page for project links and acknowledgements.
 
 ## AI-assisted development disclaimer
 
