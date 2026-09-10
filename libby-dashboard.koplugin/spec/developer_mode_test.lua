@@ -70,20 +70,39 @@ local old_store = storeWith({ book_path_template = "previous-default", adobe_reg
 local old_default = KOReaderController.new{ settings_store = old_store }
 old_default:load()
 assert(old_default.settings.book_path_template == "{title}", "migration 1 must force the current built-in path template")
-assert(old_default.settings.migration_index == 2, "all current migrations must be marked applied")
-assert(old_store.saved and old_store.saved.migration_index == 2, "latest migration index must persist during startup")
-assert(old_default.settings.libby_expanded_grid_rows == 3, "expanded grid must default to three rows")
+assert(old_default.settings.migration_index == 3, "all current migrations must be marked applied")
+assert(old_store.saved and old_store.saved.migration_index == 3, "latest migration index must persist during startup")
+assert(old_default.settings.libby_browser_grid_rows == 3, "browser grid must default to three rows")
+assert(old_default.settings.libby_expanded_grid_rows == nil, "legacy expanded settings must be removed after migration")
 
 local custom = KOReaderController.new{ settings_store = storeWith({ migration_index = 1, book_path_template = "custom-template", libby_expanded_grid_rows = 4, adobe_registration = { ok = true } }) }
 custom:load()
 assert(custom.settings.book_path_template == "custom-template", "an already-migrated custom path must not be reset")
-assert(custom.settings.libby_expanded_grid_rows == 3, "migration 2 must move the previous four-row expanded default to three rows")
-assert(custom.settings.migration_index == 2)
+assert(custom.settings.libby_browser_grid_rows == 3, "migration 2 default correction must carry into browser-root migration")
+assert(custom.settings.migration_index == 3)
 
 local custom_rows = KOReaderController.new{ settings_store = storeWith({ migration_index = 1, libby_expanded_grid_rows = 5, adobe_registration = { ok = true } }) }
 custom_rows:load()
-assert(custom_rows.settings.libby_expanded_grid_rows == 5, "migration 2 must preserve a non-default custom expanded row count")
-assert(custom_rows.settings.migration_index == 2)
+assert(custom_rows.settings.libby_browser_grid_rows == 5, "browser-root migration must preserve a non-default custom row count")
+assert(custom_rows.settings.migration_index == 3)
+
+local browser_migration = KOReaderController.new{ settings_store = storeWith({
+    migration_index = 2,
+    libby_selected_card_id = "card-x",
+    libby_expanded_grid_columns = 6,
+    libby_expanded_grid_rows = 5,
+    libby_expanded_list_rows = 9,
+    libby_expanded_view_mode = "list",
+    adobe_registration = { ok = true },
+}) }
+browser_migration:load()
+assert(browser_migration.settings.libby_browser_scope_id == "card-x", "last real library must migrate into browser scope")
+assert(browser_migration.settings.libby_browser_grid_columns == 6)
+assert(browser_migration.settings.libby_browser_grid_rows == 5)
+assert(browser_migration.settings.libby_browser_list_rows == 9)
+assert(browser_migration.settings.libby_browser_view_mode == "list", "last grid/list mode must migrate")
+assert(browser_migration.settings.libby_selected_card_id == nil and browser_migration.settings.libby_expanded_view_mode == nil,
+    "legacy dashboard/expanded selection keys must be removed")
 
 local migrated = KOReaderController.new{ settings_store = storeWith({ cleanup_mode = "dry_run", adobe_registration = { ok = true } }) }
 migrated:load()

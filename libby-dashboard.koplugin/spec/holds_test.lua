@@ -161,8 +161,8 @@ local catalog_file = assert(io.open("libby-dashboard.koplugin/libby_catalog.lua"
 local catalog_source = catalog_file:read("*a")
 catalog_file:close()
 assert(catalog_source:find('_("On Hold")', 1, true), "hold status must read On Hold")
-assert(catalog_source:find("HOLDS_ICON_PATH", 1, true), "expanded header must include Holds icon")
-assert(catalog_source:find('_("Refreshing…")', 1, true), "expanded header must expose refresh feedback")
+assert(catalog_source:find("HOLDS_ICON_PATH", 1, true), "browser header must include Holds icon")
+assert(catalog_source:find('_("Refreshing…")', 1, true), "browser header must expose refresh feedback")
 assert(catalog_source:find('_("Cancel Hold")', 1, true), "hold action must read Cancel Hold")
 assert(catalog_source:find('_("Borrow")', 1, true), "available hold action must offer Borrow")
 assert(catalog_source:find('_("Read on Libby")', 1, true), "unsupported home-grid titles must read Read on Libby")
@@ -173,11 +173,11 @@ assert(catalog_source:find('_("Position: ")', 1, true), "hold detail must includ
 assert(catalog_source:find('_("Estimated wait: ")', 1, true), "hold detail must include estimated wait")
 assert(catalog_source:find('_("#%d in line · %s")', 1, true), "hold cover status must combine position and wait")
 assert(catalog_source:find('text = "#1000 in line · 365 days"', 1, true),
-    "expanded list status column must reserve room for a realistic worst-case hold status")
+    "browser list status column must reserve room for a realistic worst-case hold status")
 assert(catalog_source:find("desired_loan_w = math.max(desired_loan_w, candidate_probe:getSize().w + 2 * pad)", 1, true),
-    "expanded list status column must also grow for actual status text and translations")
+    "browser list status column must also grow for actual status text and translations")
 assert(catalog_source:find("local loan_w = math.min(desired_loan_w, math.floor(width * 0.40))", 1, true),
-    "expanded list status column must be allowed substantially more width without starving metadata")
+    "browser list status column must be allowed substantially more width without starving metadata")
 assert(catalog_source:find("height = Screen:scaleBySize(36)", 1, true), "Book Notes display must reserve a compact two-line text area")
 assert(catalog_source:find("content_h + action_band_h + 2 * Size.border.default", 1, true), "Hold and normal detail cards must size themselves from actual Notes-capable content")
 assert(catalog_source:find("-- Notes are a book action, not a Hold-only action.", 1, true), "Book Notes action must be available for loans as well as Holds")

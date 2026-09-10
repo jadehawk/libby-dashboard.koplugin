@@ -15,25 +15,22 @@ KOReaderController.__index = KOReaderController
 
 KOReaderController.SETTINGS_KEY = "libby_dashboard"
 
-local CURRENT_MIGRATION_INDEX = 2
+local CURRENT_MIGRATION_INDEX = 3
 
 local DEFAULTS = {
     settings_version = 1,
     migration_index = CURRENT_MIGRATION_INDEX,
     book_path_template = PathTemplate.DEFAULT_TEMPLATE,
-    libby_shelf_columns = 4,
-    libby_shelf_rows = 2,
-    libby_shelf_page = 1,
-    libby_expanded_grid_columns = 4,
-    libby_expanded_grid_rows = 3,
-    libby_expanded_grid_page = 1,
-    libby_expanded_list_rows = 7,
-    libby_expanded_list_page = 1,
-    libby_expanded_view_mode = "grid",
+    libby_browser_scope_id = "__all__",
+    libby_browser_grid_columns = 4,
+    libby_browser_grid_rows = 3,
+    libby_browser_list_rows = 7,
+    libby_browser_view_mode = "grid",
     libby_snapshot = nil,
     libby_identity = nil,
     downloaded_loans = {},
     book_notes = {},
+    magazine_seen_issues = {},
     cleanup_mode = "normal",
     extended_loan_time = true,
     developer_mode = false,
@@ -117,6 +114,35 @@ function KOReaderController:load()
         self:save()
     end
 
+    if migration_index < 3 then
+        loaded = type(loaded) == "table" and loaded or {}
+        self.settings.libby_browser_scope_id = loaded.libby_browser_scope_id
+            or self.settings.libby_selected_card_id
+            or "__all__"
+        self.settings.libby_browser_grid_columns = tonumber(loaded.libby_browser_grid_columns)
+            or tonumber(self.settings.libby_expanded_grid_columns)
+            or 4
+        self.settings.libby_browser_grid_rows = tonumber(loaded.libby_browser_grid_rows)
+            or tonumber(self.settings.libby_expanded_grid_rows)
+            or 3
+        self.settings.libby_browser_list_rows = tonumber(loaded.libby_browser_list_rows)
+            or tonumber(self.settings.libby_expanded_list_rows)
+            or 7
+        self.settings.libby_browser_view_mode = (loaded.libby_browser_view_mode or self.settings.libby_expanded_view_mode) == "list"
+            and "list" or "grid"
+        for _, key in ipairs({
+            "libby_selected_card_id", "libby_selected_loan_id",
+            "libby_shelf_columns", "libby_shelf_rows", "libby_shelf_page",
+            "libby_expanded_grid_columns", "libby_expanded_grid_rows", "libby_expanded_grid_page",
+            "libby_expanded_list_rows", "libby_expanded_list_page", "libby_expanded_view_mode",
+        }) do
+            self.settings[key] = nil
+        end
+        self.settings.migration_index = 3
+        DiagnosticLog.log("[controller] migration:applied", "index=3 browser_root")
+        self:save()
+    end
+
     if not PathTemplate.validate(self.settings.book_path_template) then
         self.settings.book_path_template = PathTemplate.DEFAULT_TEMPLATE
     end
@@ -166,6 +192,55 @@ function KOReaderController:set_book_note(item, note)
         self.settings.book_notes[key] = nil
     else
         self.settings.book_notes[key] = note
+    end
+    return self:save()
+end
+
+local function magazine_parent_key(item)
+    if type(item) ~= "table" then return nil end
+    local value = item.parent_magazine_title_id or item.parentMagazineTitleId
+        or item.subscription_title_id or item.subscriptionTitleId
+    if value == nil or tostring(value) == "" then return nil end
+    return tostring(value)
+end
+
+local function magazine_issue_key(item)
+    if type(item) ~= "table" or item.id == nil or tostring(item.id) == "" then return nil end
+    return tostring(item.id)
+end
+
+function KOReaderController:apply_magazine_issue_state(snapshot)
+    if type(snapshot) ~= "table" then return snapshot end
+    if type(self.settings.magazine_seen_issues) ~= "table" then self.settings.magazine_seen_issues = {} end
+    for _, magazine in ipairs(type(snapshot.magazine_subscriptions) == "table" and snapshot.magazine_subscriptions or {}) do
+        local parent_key = magazine_parent_key(magazine)
+        local issue_key = magazine_issue_key(magazine)
+        if parent_key and issue_key then
+            local seen_issue = self.settings.magazine_seen_issues[parent_key]
+            if seen_issue == nil then
+                self.settings.magazine_seen_issues[parent_key] = issue_key
+                magazine.magazine_new_issue = false
+            else
+                magazine.magazine_new_issue = tostring(seen_issue) ~= issue_key
+            end
+        else
+            magazine.magazine_new_issue = false
+        end
+    end
+    return snapshot
+end
+
+function KOReaderController:acknowledge_magazine_issue(item)
+    local parent_key = magazine_parent_key(item)
+    local issue_key = magazine_issue_key(item)
+    if not parent_key or not issue_key then return nil, "Magazine issue identity is incomplete" end
+    if type(self.settings.magazine_seen_issues) ~= "table" then self.settings.magazine_seen_issues = {} end
+    self.settings.magazine_seen_issues[parent_key] = issue_key
+    local snapshot = self.settings.libby_snapshot
+    for _, magazine in ipairs(type(snapshot) == "table" and type(snapshot.magazine_subscriptions) == "table" and snapshot.magazine_subscriptions or {}) do
+        if magazine_parent_key(magazine) == parent_key and magazine_issue_key(magazine) == issue_key then
+            magazine.magazine_new_issue = false
+        end
     end
     return self:save()
 end
@@ -247,6 +322,13 @@ function KOReaderController:sync_libby()
     local captured, capture_err = self:save_raw_libby_sync(state)
     if not captured then return nil, capture_err end
     return state
+end
+
+function KOReaderController:sync_magazine_subscriptions()
+    if not self:libby_authenticated() then return nil, "Libby is not authenticated" end
+    local client, client_err = self:libby_client()
+    if not client then return nil, client_err end
+    return client:magazine_subscriptions()
 end
 
 function KOReaderController:return_loan(loan)
@@ -387,6 +469,33 @@ function KOReaderController:normalize_libby_state(state)
             media_type = loan.media_type,
             non_adobe_format_label = loan.non_adobe_format_label,
             cover_url = loan.cover_url,
+            edition = loan.edition,
+            parent_magazine_title_id = loan.parent_magazine_title_id,
+            magazine_frequency = loan.magazine_frequency,
+            publish_date = loan.publish_date,
+        })
+    end
+
+    local magazine_subscriptions = {}
+    for _, magazine in ipairs(LoanModel.list(state.magazine_subscriptions or {}, state.cards or {})) do
+        local raw = type(magazine.raw) == "table" and magazine.raw or {}
+        table.insert(magazine_subscriptions, {
+            id = magazine.id,
+            card_id = magazine.card_id,
+            title = magazine.title,
+            author = magazine.author,
+            authors = magazine.authors,
+            series = magazine.series,
+            series_index = magazine.series_index,
+            library = magazine.library,
+            media_type = "magazine",
+            cover_url = magazine.cover_url,
+            edition = magazine.edition,
+            parent_magazine_title_id = magazine.parent_magazine_title_id,
+            magazine_frequency = magazine.magazine_frequency,
+            publish_date = magazine.publish_date,
+            magazine_subscription = true,
+            subscription_title_id = raw.subscriptionTitleId,
         })
     end
 
@@ -395,12 +504,14 @@ function KOReaderController:normalize_libby_state(state)
         cards = cards,
         loans = loans,
         holds = holds,
+        magazine_subscriptions = magazine_subscriptions,
     }
 end
 
 function KOReaderController:save_libby_snapshot(snapshot)
     DiagnosticLog.log("[controller] save_snapshot:start")
     if type(snapshot) ~= "table" then return nil, "Libby snapshot is invalid" end
+    self:apply_magazine_issue_state(snapshot)
     self.settings.libby_snapshot = snapshot
     return self:save()
 end
@@ -658,11 +769,26 @@ function KOReaderController:save_raw_libby_sync(state)
     return archive_path, latest_path
 end
 
-function KOReaderController:refresh_libby_snapshot()
+function KOReaderController:fetch_libby_snapshot()
     local state, err = self:sync_libby()
     if not state then return nil, err end
+    local subscriptions, subscription_err = self:sync_magazine_subscriptions()
+    if subscriptions then
+        state.magazine_subscriptions = subscriptions
+        DiagnosticLog.log("[controller] magazine_subscriptions", "count=" .. tostring(#subscriptions))
+    else
+        local cached = self:cached_libby_snapshot() or {}
+        state.magazine_subscriptions = type(cached.magazine_subscriptions) == "table" and cached.magazine_subscriptions or {}
+        DiagnosticLog.log("[controller] magazine_subscriptions:unavailable", tostring(subscription_err or "unknown error"))
+    end
     local snapshot, normalize_err = self:normalize_libby_state(state)
     if not snapshot then return nil, normalize_err end
+    return snapshot
+end
+
+function KOReaderController:refresh_libby_snapshot()
+    local snapshot, err = self:fetch_libby_snapshot()
+    if not snapshot then return nil, err end
     local saved, save_err = self:save_libby_snapshot(snapshot)
     if not saved then return nil, save_err end
     return snapshot

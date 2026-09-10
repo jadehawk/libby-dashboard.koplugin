@@ -161,6 +161,11 @@ end
 
 function LoanModel.from_loan(loan, cards)
     local series, series_index = LoanModel.series(loan)
+    local frequency = type(loan) == "table" and loan.frequency or nil
+    local magazine_frequency = type(frequency) == "table"
+        and first_nonempty(frequency.name, frequency.id)
+        or first_nonempty(type(frequency) == "string" and frequency or nil,
+            type(loan) == "table" and loan.magazineFrequency or nil)
     return {
         id = type(loan) == "table" and loan.id or nil,
         card_id = type(loan) == "table" and loan.cardId or nil,
@@ -177,6 +182,10 @@ function LoanModel.from_loan(loan, cards)
         media_type = LoanModel.media_type(loan),
         non_adobe_format_label = LoanModel.non_adobe_format_label(loan),
         cover_url = LoanModel.cover_url(loan),
+        edition = type(loan) == "table" and first_nonempty(loan.edition, loan.issue) or nil,
+        parent_magazine_title_id = type(loan) == "table" and first_nonempty(loan.parentMagazineTitleId, loan.parentTitleId) or nil,
+        magazine_frequency = magazine_frequency,
+        publish_date = type(loan) == "table" and first_nonempty(loan.publishDate, loan.releaseDate, loan.dateReleased) or nil,
         raw = loan,
     }
 end
