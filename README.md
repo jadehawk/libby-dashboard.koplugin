@@ -80,7 +80,8 @@ Libby Dashboard has been successfully tested across touch and non-touch KOReader
 - Shows magazine frequency plus edition/publication metadata, while audiobooks use **Listen on Libby** for Libby-only playback.
 - Keeps local **Book Notes** attached to a title across its hold, borrowed, downloaded, and Extended Loan lifecycle.
 - Shows title details including author or magazine edition, series information, format, lending library, and remaining loan time when available.
-- Downloads supported EPUB loans and opens the resulting book directly in KOReader. PDF fulfillment is implemented but has not yet been validated with a real Libby PDF loan.
+- Downloads supported EPUB loans and opens the resulting book directly in KOReader.
+- Downloads supported PDF loans and opens the resulting book directly in KOReader.
 - Keeps unsupported reading formats such as MediaDo manga/comics visible with useful cover and metadata information.
 - Returns active loans to Libby early from the title detail panel, with confirmation before the return is submitted.
 - Supports hardware D-pad navigation on non-touch devices, including the root browser, header actions, title details, and Settings.
