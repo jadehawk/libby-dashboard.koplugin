@@ -14,7 +14,7 @@ function Layout.isTallPortrait(width, height)
     return height > width and (height / width) >= Layout.TALL_PORTRAIT_ASPECT
 end
 
-function Layout.expandedModalGeometry(screen_width, screen_height, scale)
+function Layout.browserModalGeometry(screen_width, screen_height, scale)
     screen_width = positive(screen_width)
     screen_height = positive(screen_height)
     scale = scale or function(value) return value end
@@ -35,7 +35,7 @@ function Layout.expandedModalGeometry(screen_width, screen_height, scale)
             math.floor(math.min(screen_height * 0.46, modal_width * 0.78))
         )
     else
-        -- Match the main dashboard hero's proven ~30% vertical budget on ordinary
+        -- Match the catalog browser's proven ~30% vertical budget on ordinary
         -- e-reader/tablet aspect ratios.
         modal_height = math.max(scale(230), math.floor(screen_height * 0.30))
     end
@@ -48,7 +48,7 @@ function Layout.expandedModalGeometry(screen_width, screen_height, scale)
     }
 end
 
-function Layout.expandedDetailGeometry(width, height, pad, action_height, gap, button_count, scale, tall)
+function Layout.detailGeometry(width, height, pad, action_height, gap, button_count, scale, tall)
     width = positive(width)
     height = positive(height)
     pad = math.max(0, tonumber(pad) or 0)

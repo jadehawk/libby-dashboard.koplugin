@@ -12,6 +12,7 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local LineWidget = require("ui/widget/linewidget")
+local Dpad = require("libby_dpad")
 local PathTemplate = require("path_template")
 local Size = require("ui/size")
 local TextBoxWidget = require("ui/widget/textboxwidget")
@@ -26,8 +27,6 @@ local SettingsDialog = {}
 
 local function copyState(state)
     return {
-        main_columns = state.main_columns,
-        main_rows = state.main_rows,
         grid_columns = state.grid_columns,
         grid_rows = state.grid_rows,
         list_rows = state.list_rows,
@@ -35,9 +34,7 @@ local function copyState(state)
 end
 
 local function sameState(a, b)
-    return a.main_columns == b.main_columns
-        and a.main_rows == b.main_rows
-        and a.grid_columns == b.grid_columns
+    return a.grid_columns == b.grid_columns
         and a.grid_rows == b.grid_rows
         and a.list_rows == b.list_rows
 end
@@ -45,32 +42,36 @@ end
 local function currentState(plugin)
     local settings = plugin.controller.settings
     return {
-        main_columns = math.max(2, math.min(8, tonumber(settings.libby_shelf_columns) or 4)),
-        main_rows = math.max(1, math.min(5, tonumber(settings.libby_shelf_rows) or 2)),
-        grid_columns = math.max(2, math.min(8, tonumber(settings.libby_expanded_grid_columns) or 4)),
-        grid_rows = math.max(1, math.min(6, tonumber(settings.libby_expanded_grid_rows) or 3)),
-        list_rows = math.max(4, math.min(12, tonumber(settings.libby_expanded_list_rows) or 7)),
+        grid_columns = math.max(2, math.min(8, tonumber(settings.libby_browser_grid_columns) or 4)),
+        grid_rows = math.max(1, math.min(6, tonumber(settings.libby_browser_grid_rows) or 3)),
+        list_rows = math.max(4, math.min(12, tonumber(settings.libby_browser_list_rows) or 7)),
     }
 end
 
 local function preview(plugin, state)
     local settings = plugin.controller.settings
     if plugin.catalog_browser and UIManager:isWidgetShown(plugin.catalog_browser) then
-        plugin.catalog_browser:setShelfLayout(state.main_columns, state.main_rows)
-        plugin.catalog_browser:setExpandedLayout(state.grid_columns, state.grid_rows, state.list_rows)
+        plugin.catalog_browser:setBrowserLayout(state.grid_columns, state.grid_rows, state.list_rows)
     else
-        settings.libby_shelf_columns = state.main_columns
-        settings.libby_shelf_rows = state.main_rows
-        settings.libby_expanded_grid_columns = state.grid_columns
-        settings.libby_expanded_grid_rows = state.grid_rows
-        settings.libby_expanded_list_rows = state.list_rows
+        settings.libby_browser_grid_columns = state.grid_columns
+        settings.libby_browser_grid_rows = state.grid_rows
+        settings.libby_browser_list_rows = state.list_rows
     end
 end
 
-function SettingsDialog.show(plugin, section, original, values)
+function SettingsDialog.show(plugin, section, original, values, focus_state)
     section = section or "general"
     original = original or currentState(plugin)
     values = values or copyState(original)
+    focus_state = type(focus_state) == "table" and focus_state or {}
+
+    local focus_visible = focus_state.visible
+    if focus_visible == nil then focus_visible = not Dpad.is_touch_device(Device) end
+    local focus_zone = focus_state.zone or "nav"
+    local focused_nav_index = math.max(1, tonumber(focus_state.nav_index) or 1)
+    local focused_content_index = math.max(1, tonumber(focus_state.content_index) or 1)
+    local content_actions = {}
+    local nav_actions = {}
 
     local screen = Device.screen:getSize()
     local scale = function(n) return Device.screen:scaleBySize(n) end
@@ -105,8 +106,15 @@ function SettingsDialog.show(plugin, section, original, values)
 
     local function tapFrame(text, width, height, opts, callback)
         opts = opts or {}
+        local focus_index
+        if callback and opts.navigation ~= false then
+            table.insert(content_actions, callback)
+            focus_index = #content_actions
+        end
+        local focused = opts.focused == true
+            or (focus_visible and focus_zone == "content" and focus_index ~= nil and focus_index == focused_content_index)
         local pad = opts.pad or scale(6)
-        local bordersize = opts.bordersize or 0
+        local bordersize = focused and math.max(Size.border.default, scale(3)) or (opts.bordersize or 0)
         local frame_padding = opts.align == "left" and pad or 0
         local inner_w = math.max(1, width - 2 * (bordersize + frame_padding))
         local inner_h = math.max(1, height - 2 * (bordersize + frame_padding))
@@ -153,10 +161,23 @@ function SettingsDialog.show(plugin, section, original, values)
         return item
     end
 
-    local function reopen(next_section, next_values, apply_preview)
+    local function currentFocusState()
+        return {
+            visible = focus_visible,
+            zone = focus_zone,
+            nav_index = focused_nav_index,
+            content_index = focused_content_index,
+        }
+    end
+
+    local function reopen(next_section, next_values, apply_preview, next_focus)
         closeDialog()
         if apply_preview and next_values then preview(plugin, next_values) end
-        SettingsDialog.show(plugin, next_section or section, original, next_values or values)
+        SettingsDialog.show(plugin, next_section or section, original, next_values or values, next_focus or currentFocusState())
+    end
+
+    local function redrawFocus()
+        reopen(section, values, false, currentFocusState())
     end
 
     local function chooseNumber(title, key, minimum, maximum)
@@ -269,17 +290,7 @@ function SettingsDialog.show(plugin, section, original, values)
             field_gap = math.max(scale(14), field_gap - (row_w - content_inner_w))
         end
 
-        table.insert(top, sectionHeading(_("Main UI (Libraries Shelf)")))
-        table.insert(top, VerticalSpan:new{ width = scale(2) })
-        table.insert(top, HorizontalGroup:new{
-            align = "center",
-            settingField(_("Columns (Grid):"), "main_columns", 2, 8, first_label_w, selector_w),
-            HorizontalSpan:new{ width = field_gap },
-            settingField(_("Rows:"), "main_rows", 1, 5, second_label_w, selector_w),
-        })
-        table.insert(top, VerticalSpan:new{ width = scale(6) })
-
-        table.insert(top, sectionHeading(_("Expanded View - Grid (Book Cards)")))
+        table.insert(top, sectionHeading(_("Browser - Grid (Book Cards)")))
         table.insert(top, VerticalSpan:new{ width = scale(2) })
         table.insert(top, HorizontalGroup:new{
             align = "center",
@@ -289,7 +300,7 @@ function SettingsDialog.show(plugin, section, original, values)
         })
         table.insert(top, VerticalSpan:new{ width = scale(6) })
 
-        table.insert(top, sectionHeading(_("Expanded View - List (Book List)")))
+        table.insert(top, sectionHeading(_("Browser - List (Book List)")))
         table.insert(top, VerticalSpan:new{ width = scale(2) })
         table.insert(top, settingField(_("Rows per page:"), "list_rows", 4, 12, first_label_w, selector_w))
         table.insert(top, VerticalSpan:new{ width = scale(6) })
@@ -308,8 +319,6 @@ function SettingsDialog.show(plugin, section, original, values)
                 align = "center",
                 actionButton(_("Reset to Defaults"), reset_w, function()
                     reopen("library", {
-                        main_columns = 4,
-                        main_rows = 2,
                         grid_columns = 4,
                         grid_rows = 3,
                         list_rows = 7,
@@ -382,20 +391,35 @@ function SettingsDialog.show(plugin, section, original, values)
         table.insert(group, VerticalSpan:new{ width = scale(2) })
 
         local extended_check
+        local extended_focus_index = #content_actions + 1
+        local function applyExtendedLoanTime(value)
+            plugin.controller:set_extended_loan_time(value == true)
+            plugin:refreshCatalogFromCache()
+            reopen("downloads", values, false)
+        end
+        table.insert(content_actions, function()
+            applyExtendedLoanTime(not (extended_check and extended_check.checked == true))
+        end)
         extended_check = CheckButton:new{
             text = _("Extended Loan Time"),
             checked = plugin.controller.settings.extended_loan_time == true,
-            width = content_inner_w,
+            width = math.max(1, content_inner_w - 2 * math.max(Size.border.default, scale(3))),
             parent = group,
             face = Font:getFace("cfont", 13),
             single_line = true,
             callback = function()
-                plugin.controller:set_extended_loan_time(extended_check.checked)
-                plugin:refreshCatalogFromCache()
-                reopen("downloads", values, false)
+                applyExtendedLoanTime(extended_check.checked)
             end,
         }
-        table.insert(group, extended_check)
+        table.insert(group, FrameContainer:new{
+            width = content_inner_w,
+            margin = 0,
+            padding = 0,
+            bordersize = focus_visible and focus_zone == "content" and focused_content_index == extended_focus_index
+                and math.max(Size.border.default, scale(3)) or 0,
+            background = Blitbuffer.COLOR_WHITE,
+            extended_check,
+        })
         table.insert(group, TextBoxWidget:new{
             text = _("Keep downloaded books available after the scheduled loan expiration."),
             width = content_inner_w,
@@ -623,6 +647,22 @@ function SettingsDialog.show(plugin, section, original, values)
     end
     table.insert(nav_items, { id = "about", text = _("About") })
 
+    if focus_state.nav_index == nil then
+        for index, item in ipairs(nav_items) do
+            if item.id == section then
+                focused_nav_index = index
+                break
+            end
+        end
+    end
+    focused_nav_index = math.max(1, math.min(#nav_items, focused_nav_index))
+    if #content_actions == 0 then
+        focused_content_index = 1
+        if focus_zone == "content" then focus_zone = "nav" end
+    else
+        focused_content_index = math.max(1, math.min(#content_actions, focused_content_index))
+    end
+
     local nav_row_h = scale(34)
     local nav_gap = 0
     if #nav_items > 1 then
@@ -636,15 +676,21 @@ function SettingsDialog.show(plugin, section, original, values)
     table.insert(nav, VerticalSpan:new{ width = nav_top_pad })
     for index, item in ipairs(nav_items) do
         local selected = item.id == section
+        local nav_index = index
+        local callback = function()
+            focused_nav_index = nav_index
+            if item.id ~= section then reopen(item.id, values, false) end
+        end
+        nav_actions[index] = callback
         table.insert(nav, tapFrame(item.text, nav_w, nav_row_h, {
             align = "left",
             pad = scale(5),
             font_size = 15,
             bold = true,
             background = selected and Blitbuffer.COLOR_LIGHT_GRAY or Blitbuffer.COLOR_WHITE,
-        }, function()
-            if item.id ~= section then reopen(item.id, values, false) end
-        end))
+            navigation = false,
+            focused = focus_visible and focus_zone == "nav" and focused_nav_index == index,
+        }, callback))
         if index < #nav_items and nav_gap > 0 then
             table.insert(nav, VerticalSpan:new{ width = nav_gap })
         end
@@ -673,6 +719,8 @@ function SettingsDialog.show(plugin, section, original, values)
         tapFrame("X", close_w, header_content_h, {
             font_size = 16,
             bold = false,
+            navigation = false,
+            focused = focus_visible and focus_zone == "close",
         }, closeAndRevert),
     }
     local header = VerticalGroup:new{
@@ -713,6 +761,76 @@ function SettingsDialog.show(plugin, section, original, values)
             shell,
         },
     }
+    dialog.key_events = Dpad.dialog_key_events(Device)
+
+    local function revealFocus()
+        if focus_visible then return false end
+        focus_visible = true
+        focus_zone = "nav"
+        redrawFocus()
+        return true
+    end
+
+    dialog.onDpadBack = function()
+        closeAndRevert()
+        return true
+    end
+    dialog.onDpadUp = function()
+        if revealFocus() then return true end
+        if focus_zone == "nav" then
+            focused_nav_index = ((focused_nav_index - 2) % #nav_items) + 1
+        elseif focus_zone == "content" and #content_actions > 0 then
+            focused_content_index = ((focused_content_index - 2) % #content_actions) + 1
+        elseif focus_zone == "close" then
+            focus_zone = "nav"
+        end
+        redrawFocus()
+        return true
+    end
+    dialog.onDpadDown = function()
+        if revealFocus() then return true end
+        if focus_zone == "nav" then
+            focused_nav_index = (focused_nav_index % #nav_items) + 1
+        elseif focus_zone == "content" and #content_actions > 0 then
+            focused_content_index = (focused_content_index % #content_actions) + 1
+        elseif focus_zone == "close" then
+            focus_zone = "nav"
+        end
+        redrawFocus()
+        return true
+    end
+    dialog.onDpadLeft = function()
+        if revealFocus() then return true end
+        if focus_zone == "content" or focus_zone == "close" then
+            focus_zone = "nav"
+        end
+        redrawFocus()
+        return true
+    end
+    dialog.onDpadRight = function()
+        if revealFocus() then return true end
+        if focus_zone == "nav" then
+            focus_zone = #content_actions > 0 and "content" or "close"
+        elseif focus_zone == "content" then
+            focus_zone = "close"
+        end
+        redrawFocus()
+        return true
+    end
+    dialog.onDpadPress = function()
+        if revealFocus() then return true end
+        if focus_zone == "close" then
+            closeAndRevert()
+        elseif focus_zone == "nav" then
+            local action = nav_actions[focused_nav_index]
+            if action then action() end
+        elseif focus_zone == "content" then
+            local action = content_actions[focused_content_index]
+            if action then action() end
+        end
+        return true
+    end
+
     plugin.settings_dialog = dialog
     UIManager:show(dialog)
 end

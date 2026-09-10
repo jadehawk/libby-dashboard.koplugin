@@ -2,6 +2,8 @@ local LibbyClient = {}
 LibbyClient.__index = LibbyClient
 
 LibbyClient.SENTRY_BASE = "https://sentry.libbyapp.com"
+LibbyClient.TAGS_BASE = "https://vandal.libbyapp.com"
+LibbyClient.THUNDER_BASE = "https://thunder.api.overdrive.com/v2"
 LibbyClient.CLIENT_VERSION = "d:22.0.3"
 
 local function copy_table(source)
@@ -12,6 +14,47 @@ local function copy_table(source)
         end
     end
     return result
+end
+
+local function url_encode_component(value)
+    value = tostring(value or "")
+    return (value:gsub("([^%w%-_%.~])", function(ch)
+        return string.format("%%%02X", string.byte(ch))
+    end))
+end
+
+local function contains_text(value, needle, depth)
+    depth = tonumber(depth) or 0
+    if depth > 6 then return false end
+    if type(value) == "string" then
+        return value:lower():find(needle, 1, true) ~= nil
+    end
+    if type(value) ~= "table" then return false end
+    for key, child in pairs(value) do
+        if contains_text(key, needle, depth + 1) or contains_text(child, needle, depth + 1) then return true end
+    end
+    return false
+end
+
+local function is_notify_me_tag(tag)
+    if type(tag) ~= "table" then return false end
+    if contains_text(tag.behaviors, "notify-me") then return true end
+    return contains_text(tag, "subscription") and tostring(tag.name or ""):lower():find("notify", 1, true) ~= nil
+end
+
+local function tagging_may_be_magazine(tagging)
+    if type(tagging) ~= "table" then return false end
+    local format = tostring(tagging.titleFormat or ""):lower()
+    if format == "" then return true end
+    if format:find("magazine", 1, true) or format:find("periodical", 1, true) then return true end
+    if format:find("audio", 1, true) or format:find("ebook", 1, true) or format:find("kindle", 1, true) then return false end
+    return true
+end
+
+local function media_is_magazine(media)
+    if type(media) ~= "table" then return false end
+    if contains_text(media.type, "magazine") or contains_text(media.type, "periodical") then return true end
+    return contains_text(media.formats, "magazine") or contains_text(media.formats, "periodical")
 end
 
 local function normalize_response(response)
@@ -97,7 +140,7 @@ function LibbyClient:_request(method, path, options)
 
     local response, err = self.transport:request({
         method = method,
-        base_url = LibbyClient.SENTRY_BASE,
+        base_url = options.base_url or LibbyClient.SENTRY_BASE,
         path = path,
         query = options.query,
         headers = headers,
@@ -349,6 +392,199 @@ function LibbyClient:sync()
         return nil, "Libby sync failed with HTTP " .. tostring(response.status)
     end
     return response.body
+end
+
+function LibbyClient:tags()
+    local response, err = self:_request("GET", "/tags", {
+        base_url = LibbyClient.TAGS_BASE,
+        identity = self.identity,
+    })
+    if not response then return nil, err end
+    if response.status == 403 and response_result(response) == "missing_chip" then
+        local refreshed, refresh_err = self:get_chip(true, true)
+        if not refreshed then return nil, refresh_err end
+        response, err = self:_request("GET", "/tags", {
+            base_url = LibbyClient.TAGS_BASE,
+            identity = self.identity,
+        })
+        if not response then return nil, err end
+    end
+    if response.status ~= 200 then return nil, "Libby tags failed with HTTP " .. tostring(response.status) end
+    return type(response.body) == "table" and response.body or {}
+end
+
+function LibbyClient:tag(tag_id, tag_name, start_index, end_index)
+    if type(self.transport.base64_encode) ~= "function" then
+        return nil, "KOReader transport does not support base64 encoding"
+    end
+    local encoded_name, encode_err = self.transport:base64_encode(tostring(tag_name or ""))
+    if not encoded_name then return nil, encode_err end
+    local path = "/tag/" .. url_encode_component(tag_id) .. "/" .. url_encode_component(encoded_name)
+    local response, err = self:_request("GET", path, {
+        base_url = LibbyClient.TAGS_BASE,
+        identity = self.identity,
+        query = {
+            enc = "1",
+            sort = "newest",
+            range = tostring(tonumber(start_index) or 0) .. "..." .. tostring(tonumber(end_index) or 100),
+        },
+    })
+    if not response then return nil, err end
+    if response.status ~= 200 then return nil, "Libby tag details failed with HTTP " .. tostring(response.status) end
+    return type(response.body) == "table" and response.body or {}
+end
+
+function LibbyClient:media_bulk(title_ids)
+    if type(title_ids) ~= "table" or #title_ids == 0 then return {} end
+    local ids = {}
+    for _, id in ipairs(title_ids) do
+        if id ~= nil and tostring(id) ~= "" then table.insert(ids, tostring(id)) end
+    end
+    if #ids == 0 then return {} end
+    local response, err = self:_request("GET", "/media/bulk", {
+        base_url = LibbyClient.THUNDER_BASE,
+        query = {
+            titleIds = table.concat(ids, ","),
+            ["x-client-id"] = "dewey",
+        },
+    })
+    if not response then return nil, err end
+    if response.status ~= 200 then return nil, "OverDrive magazine lookup failed with HTTP " .. tostring(response.status) end
+    return type(response.body) == "table" and response.body or {}
+end
+
+function LibbyClient:magazine_subscriptions()
+    local tag_state, tag_err = self:tags()
+    if not tag_state then return nil, tag_err end
+
+    local taggings = {}
+    local seen_taggings = {}
+    local function add_tagging(tagging)
+        if not tagging_may_be_magazine(tagging) then return end
+        local title_id = type(tagging) == "table" and tagging.titleId or nil
+        if title_id == nil or tostring(title_id) == "" then return end
+        local key = tostring(title_id) .. "|" .. tostring(tagging.cardId or "")
+        if seen_taggings[key] then return end
+        seen_taggings[key] = true
+        table.insert(taggings, tagging)
+    end
+
+    for _, tag in ipairs(type(tag_state.tags) == "table" and tag_state.tags or {}) do
+        if is_notify_me_tag(tag) then
+            local initial = type(tag.taggings) == "table" and tag.taggings or {}
+            local total = tonumber(tag.totalTaggings) or #initial
+            if total <= #initial then
+                for _, tagging in ipairs(initial) do add_tagging(tagging) end
+            else
+                local page_size = 100
+                local start_index = 0
+                while start_index < total do
+                    local detail, detail_err = self:tag(tag.uuid, tag.name, start_index, math.min(total, start_index + page_size))
+                    if not detail then return nil, detail_err end
+                    local detail_tag = type(detail.tag) == "table" and detail.tag or {}
+                    local page = type(detail_tag.taggings) == "table" and detail_tag.taggings or {}
+                    for _, tagging in ipairs(page) do add_tagging(tagging) end
+                    if #page == 0 then break end
+                    start_index = start_index + page_size
+                end
+            end
+        end
+    end
+
+    if #taggings == 0 then return {} end
+    local by_tagged_title = {}
+    local unique_tagged_ids = {}
+    for _, tagging in ipairs(taggings) do
+        local id = tostring(tagging.titleId)
+        if not by_tagged_title[id] then
+            by_tagged_title[id] = {}
+            table.insert(unique_tagged_ids, id)
+        end
+        table.insert(by_tagged_title[id], tagging)
+    end
+
+    -- Libby has used both shapes for magazine Notify Me taggings in the wild:
+    -- some taggings contain a parent magazine title id, while current Libby
+    -- clients may tag the current issue id directly. Resolve the tagged media
+    -- first, associate it by either its id or parentMagazineTitleId, then only
+    -- follow recentIssues when OverDrive tells us a newer issue exists.
+    local result = {}
+    local emitted = {}
+    local latest_matches = {}
+    local latest_issue_ids = {}
+
+    local function append_matches(target, source)
+        for _, tagging in pairs(source or {}) do
+            local key = tostring(tagging.titleId or "") .. "|" .. tostring(tagging.cardId or "")
+            if not target[key] then target[key] = tagging end
+        end
+    end
+
+    local function matches_for(media)
+        local matches = {}
+        append_matches(matches, by_tagged_title[tostring(media.id or "")])
+        append_matches(matches, by_tagged_title[tostring(media.parentMagazineTitleId or "")])
+        return matches
+    end
+
+    local function emit(media, matches)
+        local issue_id = tostring(media.id or "")
+        for _, tagging in pairs(matches or {}) do
+            local key = issue_id .. "|" .. tostring(tagging.cardId or "")
+            if not emitted[key] then
+                emitted[key] = true
+                local copy = copy_table(media)
+                copy.cardId = tagging.cardId
+                copy.websiteId = tagging.websiteId
+                copy.magazineSubscription = true
+                copy.subscriptionTitleId = tagging.titleId
+                table.insert(result, copy)
+            end
+        end
+    end
+
+    for batch_start = 1, #unique_tagged_ids, 24 do
+        local batch = {}
+        for index = batch_start, math.min(#unique_tagged_ids, batch_start + 23) do
+            table.insert(batch, unique_tagged_ids[index])
+        end
+        local tagged_media, media_err = self:media_bulk(batch)
+        if not tagged_media then return nil, media_err end
+        for _, media in ipairs(tagged_media) do
+            if media_is_magazine(media) then
+                local matches = matches_for(media)
+                if next(matches) ~= nil then
+                    local recent = type(media.recentIssues) == "table" and media.recentIssues or {}
+                    local latest_id = type(recent[1]) == "table" and recent[1].id or nil
+                    if latest_id ~= nil and tostring(latest_id) ~= "" and tostring(latest_id) ~= tostring(media.id or "") then
+                        latest_id = tostring(latest_id)
+                        if not latest_matches[latest_id] then
+                            latest_matches[latest_id] = {}
+                            table.insert(latest_issue_ids, latest_id)
+                        end
+                        append_matches(latest_matches[latest_id], matches)
+                    else
+                        emit(media, matches)
+                    end
+                end
+            end
+        end
+    end
+
+    for batch_start = 1, #latest_issue_ids, 24 do
+        local batch = {}
+        for index = batch_start, math.min(#latest_issue_ids, batch_start + 23) do
+            table.insert(batch, latest_issue_ids[index])
+        end
+        local issue_items, issue_err = self:media_bulk(batch)
+        if not issue_items then return nil, issue_err end
+        for _, media in ipairs(issue_items) do
+            if media_is_magazine(media) then
+                emit(media, latest_matches[tostring(media.id or "")])
+            end
+        end
+    end
+    return result
 end
 
 function LibbyClient:_recover_fulfillment_on_same_connection(path, return_href)

@@ -67,6 +67,15 @@ function KOReaderTransport:_load()
     return true
 end
 
+function KOReaderTransport:base64_encode(value)
+    local loaded, load_err = self:_load()
+    if not loaded then return nil, load_err end
+    if not self.mime or type(self.mime.b64) ~= "function" then return nil, "KOReader MIME support is unavailable" end
+    local encoded = self.mime.b64(tostring(value or ""))
+    if type(encoded) ~= "string" then return nil, "base64 encode failed" end
+    return (encoded:gsub("%s+", ""))
+end
+
 function KOReaderTransport:base64url_decode(value)
     local loaded, load_err = self:_load()
     if not loaded then return nil, load_err end

@@ -578,6 +578,22 @@ function LibbyDashboard:removeTrackedBook(record)
     return true
 end
 
+function LibbyDashboard:showLibbyMediaInfo(item)
+    local kind = item and item.media_type
+    local message
+    if kind == "magazine" and item.magazine_subscription == true then
+        message = _("This current issue appears in your Magazine Rack from your Libby magazine subscription.")
+            .. "\n\n" .. _("Magazine reading is handled by Libby and is not downloaded into KOReader.")
+    elseif kind == "magazine" then
+        message = _("Magazine reading is handled by Libby and is not downloaded into KOReader.")
+    elseif kind == "audiobook" then
+        message = _("Audiobook playback is handled by Libby and is not available inside KOReader.")
+    else
+        message = _("This title is handled by Libby rather than KOReader.")
+    end
+    UIManager:show(InfoMessage:new{ text = message })
+end
+
 function LibbyDashboard:downloadLoan(loan, options)
     DiagnosticLog.log("[loan] download:requested")
     options = type(options) == "table" and options or {}
@@ -913,11 +929,21 @@ end
 
 function LibbyDashboard:prefetchBrowserCovers(browser)
     local snapshot = browser and browser.snapshot or nil
-    if type(snapshot) ~= "table" or type(snapshot.loans) ~= "table" then return end
+    if type(snapshot) ~= "table" then return end
     local missing = {}
-    for _, loan in ipairs(snapshot.loans) do
-        if loan.cover_url and not self:coverCachePath(loan) then table.insert(missing, loan) end
+    local seen = {}
+    local function collect(items)
+        for _, item in ipairs(type(items) == "table" and items or {}) do
+            local cache_key = item.id or item.title or item.cover_url
+            local key = cache_key ~= nil and tostring(cache_key) or nil
+            if item.cover_url and key and not seen[key] and not self:coverCachePath(item) then
+                seen[key] = true
+                table.insert(missing, item)
+            end
+        end
     end
+    collect(snapshot.loans)
+    collect(snapshot.magazine_subscriptions)
     if #missing == 0 then return end
 
     local online = type(NetworkMgr.isOnline) ~= "function" or NetworkMgr:isOnline()
@@ -1071,9 +1097,7 @@ function LibbyDashboard:refreshBrowserSnapshot(browser)
         Trapper:wrap(function()
             DiagnosticLog.log("[refresh] subprocess:start")
             local completed, encoded = Trapper:dismissableRunInSubprocess(function()
-                local state = self.controller:sync_libby()
-                if not state then return nil end
-                local normalized = self.controller:normalize_libby_state(state)
+                local normalized = self.controller:fetch_libby_snapshot()
                 if not normalized then return nil end
                 return rapidjson.encode(normalized)
             end, nil, true)
@@ -1113,6 +1137,8 @@ function LibbyDashboard:refreshBrowserSnapshot(browser)
                 return
             end
 
+            local magazine_count = type(refreshed.magazine_subscriptions) == "table" and #refreshed.magazine_subscriptions or 0
+            DiagnosticLog.log("[refresh] magazine_subscriptions", "count=" .. tostring(magazine_count))
             DiagnosticLog.log("[refresh] snapshot-save:start")
             local saved = self.controller:save_libby_snapshot(refreshed)
             DiagnosticLog.log("[refresh] snapshot-save:end", "saved=" .. tostring(saved ~= nil and saved ~= false))
@@ -1360,7 +1386,7 @@ function LibbyDashboard:returnLoan(loan)
 end
 
 function LibbyDashboard:showBrowser()
-    DiagnosticLog.log("[ui] dashboard:open")
+    DiagnosticLog.log("[ui] browser:open")
     if self.catalog_browser ~= nil then return end
     self._automatic_update_check_done = false
 
@@ -1370,6 +1396,12 @@ function LibbyDashboard:showBrowser()
         _manager = self,
         download_callback = function(loan)
             self:downloadLoan(loan)
+        end,
+        libby_media_callback = function(item)
+            self:showLibbyMediaInfo(item)
+        end,
+        magazine_acknowledge_callback = function(item)
+            return self.controller:acknowledge_magazine_issue(item)
         end,
         return_callback = function(loan)
             self:returnLoan(loan)
